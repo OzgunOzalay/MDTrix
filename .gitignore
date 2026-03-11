@@ -1,0 +1,9 @@
+# Build artifacts
+tmp/
+bin/
+lib/
+config
+build.log
+configure.log
+core/version.cpp
+src/exec_version.cpp
