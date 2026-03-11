@@ -50,6 +50,16 @@ const OptionGroup SIFT2RegularisationOption = OptionGroup ("Regularisation optio
     + Argument ("value").type_float (0.0)
 
   + Option ("reg_tv", "provide coefficient for regularising variance of streamline weighting coefficient to fixels along its length (Total Variation regularisation) (default: " + str(SIFT2_REGULARISATION_TV_DEFAULT, 2) + ")")
+    + Argument ("value").type_float (0.0)
+
+  + Option ("microstructure_weighting", "path to a text file containing one microstructure index value (MicroAF) per streamline, "
+                                        "in the same order as the input tractogram. When provided, a microstructure-informed prior "
+                                        "term is added to the objective function that penalises high weights on streamlines with low "
+                                        "MicroAF values. If not provided, behaviour is identical to the standard SIFT2 algorithm.")
+    + Argument ("file").type_file_in()
+
+  + Option ("microstructure_lambda", "strength of the microstructure prior term "
+                                     "(default: " + str(SIFT2_REGULARISATION_MICRO_DEFAULT, 2) + ")")
     + Argument ("value").type_float (0.0);
 
 
@@ -195,6 +205,12 @@ void run ()
     const float reg_tikhonov = get_option_value ("reg_tikhonov", SIFT2_REGULARISATION_TIKHONOV_DEFAULT);
     const float reg_tv = get_option_value ("reg_tv", SIFT2_REGULARISATION_TV_DEFAULT);
     tckfactor.set_reg_lambdas (reg_tikhonov, reg_tv);
+
+    opt = get_options ("microstructure_weighting");
+    if (opt.size()) {
+      const float micro_lambda = get_option_value ("microstructure_lambda", SIFT2_REGULARISATION_MICRO_DEFAULT);
+      tckfactor.load_microstructure_weights (std::string(opt[0][0]), micro_lambda);
+    }
 
     opt = get_options ("min_iters");
     if (opt.size())

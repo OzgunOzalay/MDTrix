@@ -60,6 +60,41 @@ namespace MR {
 
 
 
+      void TckFactor::load_microstructure_weights (const std::string& path, const double lambda_micro)
+      {
+        assert (num_tracks());
+
+        auto values = load_vector<default_type> (path);
+        if (size_t(values.size()) != num_tracks())
+          throw Exception ("Microstructure weighting file contains " + str(values.size()) + " entries, but tractogram has " + str(num_tracks()) + " streamlines");
+
+        size_t clamped_count = 0;
+        microstructure_af.resize (num_tracks());
+        for (SIFT::track_t i = 0; i != num_tracks(); ++i) {
+          if (values[i] < SIFT2_MICRO_AF_EPSILON) {
+            microstructure_af[i] = SIFT2_MICRO_AF_EPSILON;
+            ++clamped_count;
+          } else {
+            microstructure_af[i] = values[i];
+          }
+        }
+
+        if (clamped_count)
+          WARN (str(clamped_count) + " streamlines had MicroAF values below " + str(SIFT2_MICRO_AF_EPSILON) + " and were clamped");
+
+        double A = 0.0;
+        for (size_t i = 1; i != fixels.size(); ++i)
+          A += fixels[i].get_weight() * Math::pow2 (fixels[i].get_FOD());
+        A /= double(num_tracks());
+
+        reg_multiplier_micro = lambda_micro * A;
+        has_microstructure = true;
+
+        INFO ("Microstructure weighting loaded from \"" + path + "\" with lambda = " + str(lambda_micro) + " (scaled = " + str(reg_multiplier_micro) + ")");
+      }
+
+
+
       void TckFactor::store_orig_TDs()
       {
         for (vector<Fixel>::iterator i = fixels.begin(); i != fixels.end(); ++i)
@@ -319,7 +354,13 @@ namespace MR {
           cf_reg_tik *= reg_multiplier_tikhonov;
           cf_reg_tv  *= reg_multiplier_tv;
 
-          cf_reg = cf_reg_tik + cf_reg_tv;
+          double cf_reg_micro = 0.0;
+          if (has_microstructure) {
+            for (SIFT::track_t i = 0; i != num_tracks(); ++i)
+              cf_reg_micro += reg_multiplier_micro * std::exp (coefficients[i]) / microstructure_af[i];
+          }
+
+          cf_reg = cf_reg_tik + cf_reg_tv + cf_reg_micro;
 
           new_cf = cf_data + cf_reg;
 
