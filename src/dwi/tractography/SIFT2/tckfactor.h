@@ -80,7 +80,7 @@ namespace MR {
 
 
           void set_reg_lambdas     (const double, const double);
-          void load_microstructure_weights (const std::string& path, const double lambda_micro);
+          void load_microstructure_map (const std::string& map_path, const std::string& tracks_path, const double lambda_micro);
           void set_min_iters       (const int    i) { min_iters = i; }
           void set_max_iters       (const int    i) { max_iters = i; }
           void set_min_factor      (const double i) { min_coeff = i ? std::log(i) : -std::numeric_limits<double>::infinity(); }
