@@ -1,82 +1,106 @@
-# MRtrix
+# MDTrix
 
-[![Build Status](https://github.com/MRtrix3/mrtrix3/workflows/checks/badge.svg)](https://github.com/MRtrix3/mrtrix3/actions)
-[![@MRtrix3](http://img.shields.io/twitter/follow/MRtrix3.svg?style=social)](https://twitter.com/MRtrix3)
+**MDTrix** is a modified version of [MRtrix3](https://github.com/MRtrix3/mrtrix3) that adds microstructure-informed streamline weighting to `tcksift2`.
 
-*MRtrix3* can be installed / run through multiple avenues:
-- [Direct download](https://www.mrtrix.org/download/) through mechanisms tailored for different OS platforms;
-- Compiled from the source code in this repository, for which [comprehensive instructions](https://mrtrix.readthedocs.io/en/latest/installation/build_from_source.html) are provided in the [online documentation](https://mrtrix.readthedocs.io/en/);
-- Via containerisation technology using Docker or Singularity; see [online documentation page](https://mrtrix.readthedocs.org/en/latest/installation/using_containers.html) for details.
+## What this fork changes
 
-## Getting help
+Standard SIFT2 optimises per-streamline weights to match a whole-brain tractogram to fixel-wise fibre densities. MDTrix extends this by adding an optional microstructure-informed prior term to the SIFT2 objective function, allowing anatomical plausibility information from a microstructure map to influence the final streamline weights.
 
-Instructions on software setup and use are provided in the [online documentation](https://mrtrix.readthedocs.org).
-Support and general discussion is hosted on the [*MRtrix3* Community Forum](http://community.mrtrix.org/).
-Please also look through the Frequently Asked Questions on the [wiki section of the forum](http://community.mrtrix.org/c/wiki).
-You can address all *MRtrix3*-related queries there, using your GitHub or Google login to post questions.
+### Modified objective function
 
-## Quick install
+The standard SIFT2 cost function has two terms — a data fidelity term and a regularisation term:
 
-1. Install dependencies by whichever means your system uses. 
-   These include: Python (>=2.6), a C++ compiler with full C++11 support (`g++` 4.9 or later, `clang++`), 
-   Eigen (>=3.2.8), zlib, OpenGL (>=3.3), and Qt (>=4.8, or at least 5.1 on MacOSX).
+```
+Minimise:  Σ_f (FOD_f − Σ_i w_i · l_if)²  +  λ₁ · Σ_i (w_i · log(w_i))
+```
 
-2. Clone Git repository and compile:
+MDTrix adds a third, microstructure-informed prior term:
 
-        $ git clone https://github.com/MRtrix3/mrtrix3.git
-        $ cd mrtrix3/
-        $ ./configure
-        $ ./build
+```
+Minimise:  Σ_f (FOD_f − Σ_i w_i · l_if)²  +  λ₁ · Σ_i (w_i · log(w_i))  +  λ₂ · Σ_i (w_i / MicroAF_effective_i)
+```
 
-3. Set the `PATH`:
+where `MicroAF_effective_i` is a data-driven per-streamline quantity computed internally from a user-supplied volumetric microstructure map.
 
-    * Bash shell:
+### How `MicroAF_effective` is computed
 
-      run the `set_path` script provided:
+Given a 3D volumetric microstructure map (normalised axonal density, mean WM value = 1.0), MDTrix:
 
-            $ ./set_path
+1. **Samples** the map along each streamline at half-voxel intervals (derived from the image header at runtime)
+2. **Computes** the mean and variance of the sampled values per streamline
+3. **Derives** the effective microstructure value:
 
-      or edit the startup `~/.bashrc` or `/etc/bash.bashrc` file manually by adding this line:
+```
+MicroAF_effective_i = mean_i / (1 + variance_i)
+```
 
-            $ export PATH=/<edit as appropriate>/mrtrix3/bin:$PATH
+This formula has no free parameters. The variance itself acts as the weighting mechanism:
 
-    * C shell:
+| Tissue type | Variance | Effect |
+|---|---|---|
+| Coherent WM (e.g. compact subcortical bundles) | Low | Denominator ≈ 1, full prior strength |
+| Heterogeneous WM (e.g. long tracts through crossings) | High | Denominator >> 1, prior automatically suppressed |
 
-      edit the startup `~/.cshrc` or `/etc/csh.cshrc` file manually by adding this line:
+### New CLI flags
 
-            $ setenv PATH /<edit as appropriate>/mrtrix3/bin:$PATH
+| Flag | Description |
+|---|---|
+| `-microstructure_map <image>` | Path to a 3D volumetric microstructure map (`.mif`, `.mif.gz`, `.nii.gz`). Optional — if omitted, behaviour is identical to standard SIFT2 with zero overhead. |
+| `-microstructure_lambda <float>` | Strength of the microstructure prior. Default: `0.05`. |
 
-4. Test installation:
+### Usage example
 
-    Command-line:
+```bash
+# Standard SIFT2 (unchanged behaviour)
+tcksift2 tracks.tck wmfod.mif weights.txt
 
-        $ mrconvert
+# With microstructure-informed prior
+tcksift2 tracks.tck wmfod.mif weights.txt \
+    -microstructure_map MicroAF.mif.gz \
+    -microstructure_lambda 0.05
+```
 
-    GUI:
+### Safeguards
 
-        $ mrview
+- If `MicroAF_effective` falls below `1e-6` for any streamline, it is clamped to `1e-6` and a warning reports how many streamlines were affected.
+- Streamlines with no valid samples (e.g. all points outside the image FOV) receive a neutral value of `1.0` (no effect on their weight).
 
-## Keeping MRtrix3 up to date
+### Validation
 
-1. You can update your installation at any time by opening a terminal in the mrtrix3 folder, and typing:
+A Python validation script is included at `scripts/validate_microstructure_weighting.py`:
 
-        git pull
-        ./build
+```bash
+python3 scripts/validate_microstructure_weighting.py \
+    tracks.tck wmfod.mif MicroAF.mif.gz [/path/to/tcksift2]
+```
 
-2. If this doesn't work immediately, it may be that you need to re-run the configure script:
+It runs standard and modified SIFT2 on the same data and verifies that:
+- Streamlines with high microstructure variance receive systematically lower weights
+- Weight changes correlate positively with `MicroAF_effective` and negatively with variance
 
-        ./configure
+## Building
 
-    and re-run step 1 again.
+MDTrix builds exactly like MRtrix3:
 
-## Building a specific release of MRtrix3
+```bash
+./configure
+./build
+```
 
-You can build a particular release of MRtrix3 by checking out the corresponding _tag_, and using the same procedure as above to build it:
+Dependencies: Python (>=2.6), C++11 compiler, Eigen (>=3.2.8), zlib, OpenGL (>=3.3), Qt (>=4.8).
 
-    git checkout 3.0_RC3
-    ./configure
-    ./build
-    
-## Contributing
+## Source code
 
-Thank you for your interest in contributing to *MRtrix3*! Please read on [here](CONTRIBUTING.md) to find out how to report issues, request features and make direct contributions. 
+The microstructure-informed SIFT2 implementation lives in:
+
+| File | Role |
+|---|---|
+| `cmd/tcksift2.cpp` | Command entry point and CLI flag definitions |
+| `src/dwi/tractography/SIFT2/tckfactor.h` | `TckFactor` class declaration |
+| `src/dwi/tractography/SIFT2/tckfactor.cpp` | Microstructure map loading, streamline sampling, `MicroAF_effective` computation |
+| `src/dwi/tractography/SIFT2/line_search.h` | Line search functor with microstructure cost term |
+| `src/dwi/tractography/SIFT2/line_search.cpp` | Cost function evaluation including microstructure gradient |
+
+## Acknowledgements
+
+MDTrix is built on [MRtrix3](https://www.mrtrix.org/). All original MRtrix3 functionality is preserved. See the MRtrix3 [documentation](https://mrtrix.readthedocs.io/) and [community forum](http://community.mrtrix.org/) for general usage.
