@@ -70,8 +70,12 @@ namespace MR {
         assert (num_tracks());
 
         auto micro_image = Image<float>::open (map_path);
-        if (micro_image.ndim() != 3)
-          throw Exception ("Microstructure map must be a 3D image (got " + str(micro_image.ndim()) + "D)");
+        const bool is_3d = (micro_image.ndim() == 3) ||
+                           (micro_image.ndim() == 4 && micro_image.size(3) == 1);
+        if (!is_3d)
+          throw Exception ("Microstructure map must be a 3D image (got " + str(micro_image.ndim()) + "D with size " +
+                           str(micro_image.size(0)) + "x" + str(micro_image.size(1)) + "x" + str(micro_image.size(2)) +
+                           (micro_image.ndim() > 3 ? ("x" + str(micro_image.size(3))) : "") + ")");
 
         const double vox_x = micro_image.spacing (0);
         const double vox_y = micro_image.spacing (1);
