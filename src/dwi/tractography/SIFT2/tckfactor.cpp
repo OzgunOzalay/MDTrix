@@ -20,9 +20,14 @@
 #include "math/math.h"
 #include "misc/bitset.h"
 
+#include "interp/linear.h"
+
 #include "fixel/legacy/fixel_metric.h"
 #include "fixel/legacy/image.h"
 #include "fixel/legacy/keys.h"
+
+#include "dwi/tractography/file.h"
+#include "dwi/tractography/streamline.h"
 
 #include "dwi/tractography/SIFT2/coeff_optimiser.h"
 #include "dwi/tractography/SIFT2/fixel_updater.h"
@@ -60,27 +65,109 @@ namespace MR {
 
 
 
-      void TckFactor::load_microstructure_weights (const std::string& path, const double lambda_micro)
+      void TckFactor::load_microstructure_map (const std::string& map_path, const std::string& tracks_path, const double lambda_micro)
       {
         assert (num_tracks());
 
-        auto values = load_vector<default_type> (path);
-        if (size_t(values.size()) != num_tracks())
-          throw Exception ("Microstructure weighting file contains " + str(values.size()) + " entries, but tractogram has " + str(num_tracks()) + " streamlines");
+        auto micro_image = Image<float>::open (map_path);
+        if (micro_image.ndim() != 3)
+          throw Exception ("Microstructure map must be a 3D image (got " + str(micro_image.ndim()) + "D)");
+
+        const double vox_x = micro_image.spacing (0);
+        const double vox_y = micro_image.spacing (1);
+        const double vox_z = micro_image.spacing (2);
+        const double sampling_interval = 0.5 * std::min ({vox_x, vox_y, vox_z});
+
+        INFO ("Microstructure map voxel sizes: " + str(vox_x) + " x " + str(vox_y) + " x " + str(vox_z) +
+              " mm; sampling interval: " + str(sampling_interval) + " mm");
+
+        Interp::Linear<decltype(micro_image)> interp (micro_image);
+
+        microstructure_af.resize (num_tracks());
 
         size_t clamped_count = 0;
-        microstructure_af.resize (num_tracks());
-        for (SIFT::track_t i = 0; i != num_tracks(); ++i) {
-          if (values[i] < SIFT2_MICRO_AF_EPSILON) {
-            microstructure_af[i] = SIFT2_MICRO_AF_EPSILON;
-            ++clamped_count;
-          } else {
-            microstructure_af[i] = values[i];
+        size_t no_sample_count = 0;
+
+        {
+          Tractography::Properties properties;
+          Tractography::Reader<float> reader (tracks_path, properties);
+          Tractography::Streamline<float> tck;
+          ProgressBar progress ("Sampling microstructure map along streamlines", num_tracks());
+
+          SIFT::track_t track_index = 0;
+          while (reader (tck) && track_index < num_tracks()) {
+
+            double sum = 0.0;
+            double sum_sq = 0.0;
+            size_t sample_count = 0;
+
+            if (tck.size() >= 2) {
+              double dist_along_segment = 0.0;
+              size_t point_idx = 0;
+
+              // Walk along the streamline, sampling at regular intervals
+              while (point_idx < tck.size() - 1) {
+                const Eigen::Vector3f& p0 = tck[point_idx];
+                const Eigen::Vector3f& p1 = tck[point_idx + 1];
+                const Eigen::Vector3f segment = p1 - p0;
+                const double segment_length = segment.norm();
+
+                if (segment_length < 1e-12) {
+                  ++point_idx;
+                  dist_along_segment = 0.0;
+                  continue;
+                }
+
+                while (dist_along_segment <= segment_length) {
+                  const double frac = dist_along_segment / segment_length;
+                  const Eigen::Vector3f sample_point = p0 + frac * segment;
+
+                  if (interp.scanner (sample_point)) {
+                    const float val = interp.value();
+                    if (std::isfinite (val) && val > 0.0f) {
+                      sum += val;
+                      sum_sq += val * val;
+                      ++sample_count;
+                    }
+                  }
+
+                  dist_along_segment += sampling_interval;
+                }
+
+                dist_along_segment -= segment_length;
+                ++point_idx;
+              }
+            }
+
+            if (sample_count > 0) {
+              const double mean = sum / sample_count;
+              const double variance = (sample_count > 1) ?
+                  (sum_sq / sample_count - mean * mean) : 0.0;
+              const double effective = mean / (1.0 + std::max (0.0, variance));
+
+              if (effective < SIFT2_MICRO_AF_EPSILON) {
+                microstructure_af[track_index] = SIFT2_MICRO_AF_EPSILON;
+                ++clamped_count;
+              } else {
+                microstructure_af[track_index] = effective;
+              }
+            } else {
+              microstructure_af[track_index] = 1.0;
+              ++no_sample_count;
+            }
+
+            ++track_index;
+            ++progress;
           }
+
+          if (track_index != num_tracks())
+            throw Exception ("Track file contains " + str(track_index) + " streamlines but expected " + str(num_tracks()));
         }
 
         if (clamped_count)
-          WARN (str(clamped_count) + " streamlines had MicroAF values below " + str(SIFT2_MICRO_AF_EPSILON) + " and were clamped");
+          WARN (str(clamped_count) + " streamlines had MicroAF_effective below " + str(SIFT2_MICRO_AF_EPSILON) + " and were clamped");
+        if (no_sample_count)
+          WARN (str(no_sample_count) + " streamlines had no valid samples from the microstructure map; set to neutral (1.0)");
 
         double A = 0.0;
         for (size_t i = 1; i != fixels.size(); ++i)
@@ -90,7 +177,7 @@ namespace MR {
         reg_multiplier_micro = lambda_micro * A;
         has_microstructure = true;
 
-        INFO ("Microstructure weighting loaded from \"" + path + "\" with lambda = " + str(lambda_micro) + " (scaled = " + str(reg_multiplier_micro) + ")");
+        INFO ("Microstructure map loaded from \"" + map_path + "\" with lambda = " + str(lambda_micro) + " (scaled = " + str(reg_multiplier_micro) + ")");
       }
 
 
