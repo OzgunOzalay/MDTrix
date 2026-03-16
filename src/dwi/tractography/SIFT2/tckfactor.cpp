@@ -147,7 +147,8 @@ namespace MR {
               const double mean = sum / sample_count;
               const double variance = (sample_count > 1) ?
                   (sum_sq / sample_count - mean * mean) : 0.0;
-              const double effective = mean / (1.0 + std::max (0.0, variance));
+              const double std_dev = (variance > 0.0) ? std::sqrt (variance) : 0.0;
+              const double effective = mean / (1.0 + std_dev);
 
               if (effective < SIFT2_MICRO_AF_EPSILON) {
                 microstructure_af[track_index] = SIFT2_MICRO_AF_EPSILON;
