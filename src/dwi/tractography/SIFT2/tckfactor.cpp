@@ -16,6 +16,7 @@
 
 #include <fstream>
 #include <map>
+#include <set>
 #include <sstream>
 
 #include "header.h"
@@ -197,6 +198,7 @@ namespace MR {
 
         // Parse CSV: intensity,class
         std::map<int, bool> label_is_subcortical;
+        size_t csv_subcortical_count = 0, csv_cortical_count = 0;
         {
           std::ifstream csv_file (classes_path);
           if (!csv_file.is_open())
@@ -232,21 +234,35 @@ namespace MR {
 
             const int intensity = std::stoi (intensity_str);
 
-            if (class_str == "Subcortical" || class_str == "subcortical")
+            if (class_str == "Subcortical" || class_str == "subcortical") {
               label_is_subcortical[intensity] = true;
-            else if (class_str == "Cortical" || class_str == "cortical")
+              ++csv_subcortical_count;
+            } else if (class_str == "Cortical" || class_str == "cortical") {
               label_is_subcortical[intensity] = false;
-            else
+              ++csv_cortical_count;
+            } else {
               throw Exception ("Unknown class \"" + class_str + "\" in parcellation CSV (expected Subcortical or Cortical)");
+            }
           }
         }
 
-        INFO (str(label_is_subcortical.size()) + " region labels loaded from parcellation classes CSV");
+        INFO ("Parcellation classes CSV: \"" + classes_path + "\"");
+        INFO ("  " + str(label_is_subcortical.size()) + " labels total (" +
+              str(csv_subcortical_count) + " subcortical, " +
+              str(csv_cortical_count) + " cortical)");
 
         auto parcel_image = Image<int32_t>::open (parcel_path);
         Interp::Nearest<decltype(parcel_image)> interp (parcel_image);
 
+        INFO ("Parcellation image: \"" + parcel_path + "\"");
+        INFO ("  Dimensions: " + str(parcel_image.size(0)) + " x " +
+              str(parcel_image.size(1)) + " x " + str(parcel_image.size(2)));
+        INFO ("  Voxel size: " + str(parcel_image.spacing(0), 3) + " x " +
+              str(parcel_image.spacing(1), 3) + " x " + str(parcel_image.spacing(2), 3) + " mm");
+
         size_t count_sub_sub = 0, count_sub_cor = 0, count_cor_cor = 0, count_unknown = 0;
+        size_t count_outside_image = 0;
+        std::set<int> labels_encountered, labels_unclassified;
 
         {
           Tractography::Properties properties;
@@ -267,13 +283,27 @@ namespace MR {
 
             // Sample parcellation at first and last streamline points
             int label_start = 0, label_end = 0;
-            if (interp.scanner (tck.front()))
+            bool start_in_image = interp.scanner (tck.front());
+            if (start_in_image)
               label_start = interp.value();
-            if (interp.scanner (tck.back()))
+            else
+              ++count_outside_image;
+            bool end_in_image = interp.scanner (tck.back());
+            if (end_in_image)
               label_end = interp.value();
+            else
+              ++count_outside_image;
+
+            if (start_in_image && label_start) labels_encountered.insert (label_start);
+            if (end_in_image && label_end)     labels_encountered.insert (label_end);
 
             auto it_start = label_is_subcortical.find (label_start);
             auto it_end   = label_is_subcortical.find (label_end);
+
+            if (start_in_image && label_start && it_start == label_is_subcortical.end())
+              labels_unclassified.insert (label_start);
+            if (end_in_image && label_end && it_end == label_is_subcortical.end())
+              labels_unclassified.insert (label_end);
 
             const bool start_known = (it_start != label_is_subcortical.end());
             const bool end_known   = (it_end   != label_is_subcortical.end());
@@ -307,12 +337,32 @@ namespace MR {
             throw Exception ("Track file contains " + str(track_index) + " streamlines but expected " + str(num_tracks()));
         }
 
-        INFO ("Parcellation endpoint classification:");
+        const size_t total_classified = count_sub_sub + count_sub_cor + count_cor_cor;
+        INFO ("Parcellation endpoint classification (" + str(num_tracks()) + " streamlines):");
         INFO ("  Subcortical-Subcortical (100% MicroAF): " + str(count_sub_sub));
         INFO ("  Subcortical-Cortical    ( 50% MicroAF): " + str(count_sub_cor));
         INFO ("  Cortical-Cortical       (  0% MicroAF): " + str(count_cor_cor));
+        INFO ("  Total classified: " + str(total_classified) +
+              " (" + str(100.0 * total_classified / num_tracks(), 1) + "%)");
         if (count_unknown)
-          WARN ("  Unknown/unclassified    (  0% MicroAF): " + str(count_unknown));
+          WARN ("  Unknown/unclassified    (  0% MicroAF): " + str(count_unknown) +
+                " (" + str(100.0 * count_unknown / num_tracks(), 1) + "%)");
+        if (count_outside_image)
+          INFO ("  Endpoints outside parcellation image: " + str(count_outside_image));
+        INFO ("  Unique non-zero labels encountered at endpoints: " + str(labels_encountered.size()));
+        if (!labels_unclassified.empty()) {
+          std::string unclassified_list;
+          size_t count = 0;
+          for (auto label : labels_unclassified) {
+            if (count > 0) unclassified_list += ", ";
+            unclassified_list += str(label);
+            if (++count >= 20) {
+              unclassified_list += " ... (" + str(labels_unclassified.size() - 20) + " more)";
+              break;
+            }
+          }
+          WARN ("  " + str(labels_unclassified.size()) + " label(s) in parcellation image not found in CSV: " + unclassified_list);
+        }
       }
 
 
