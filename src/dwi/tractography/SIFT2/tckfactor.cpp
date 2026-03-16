@@ -16,6 +16,7 @@
 
 #include <fstream>
 #include <map>
+#include <memory>
 #include <sstream>
 
 #include "header.h"
@@ -70,7 +71,8 @@ namespace MR {
 
 
 
-      void TckFactor::load_microstructure_map (const std::string& map_path, const std::string& tracks_path, const double lambda_micro)
+      void TckFactor::load_microstructure_map (const std::string& map_path, const std::string& tracks_path, const double lambda_micro,
+                                               const std::string& parcel_path, const std::string& classes_path)
       {
         assert (num_tracks());
 
@@ -90,12 +92,67 @@ namespace MR {
         INFO ("Microstructure map voxel sizes: " + str(vox_x) + " x " + str(vox_y) + " x " + str(vox_z) +
               " mm; sampling interval: " + str(sampling_interval) + " mm");
 
-        Interp::Linear<decltype(micro_image)> interp (micro_image);
+        Interp::Linear<decltype(micro_image)> micro_interp (micro_image);
+
+        // Optional parcellation setup
+        const bool do_parcellation = (!parcel_path.empty() && !classes_path.empty());
+        std::map<int, bool> label_is_subcortical;
+        std::unique_ptr<Image<int32_t>> parcel_image_ptr;
+        std::unique_ptr<Interp::Nearest<Image<int32_t>>> parcel_interp_ptr;
+
+        if (do_parcellation) {
+          std::ifstream csv_file (classes_path);
+          if (!csv_file.is_open())
+            throw Exception ("Unable to open parcellation classes CSV: \"" + classes_path + "\"");
+
+          std::string line;
+          bool header_skipped = false;
+          while (std::getline (csv_file, line)) {
+            if (line.empty())
+              continue;
+
+            if (!header_skipped) {
+              if (line.find_first_of ("0123456789") != 0) {
+                header_skipped = true;
+                continue;
+              }
+              header_skipped = true;
+            }
+
+            std::istringstream ss (line);
+            std::string intensity_str, class_str;
+            if (!std::getline (ss, intensity_str, ',') || !std::getline (ss, class_str, ','))
+              throw Exception ("Malformed line in parcellation classes CSV: \"" + line + "\"");
+
+            const size_t start = class_str.find_first_not_of (" \t\r\n");
+            const size_t end = class_str.find_last_not_of (" \t\r\n");
+            if (start == std::string::npos)
+              throw Exception ("Empty class in parcellation classes CSV: \"" + line + "\"");
+            class_str = class_str.substr (start, end - start + 1);
+
+            const int intensity = std::stoi (intensity_str);
+
+            if (class_str == "Subcortical" || class_str == "subcortical")
+              label_is_subcortical[intensity] = true;
+            else if (class_str == "Cortical" || class_str == "cortical")
+              label_is_subcortical[intensity] = false;
+            else
+              throw Exception ("Unknown class \"" + class_str + "\" in parcellation CSV (expected Subcortical or Cortical)");
+          }
+
+          INFO (str(label_is_subcortical.size()) + " region labels loaded from parcellation classes CSV");
+
+          parcel_image_ptr.reset (new Image<int32_t> (Image<int32_t>::open (parcel_path)));
+          parcel_interp_ptr.reset (new Interp::Nearest<Image<int32_t>> (*parcel_image_ptr));
+        }
 
         microstructure_af.resize (num_tracks());
+        micro_blend.resize (num_tracks());
+        micro_blend.setOnes();
 
         size_t clamped_count = 0;
         size_t no_sample_count = 0;
+        size_t count_sub_sub = 0, count_sub_cor = 0, count_cor_cor = 0, count_unknown = 0;
 
         {
           Tractography::Properties properties;
@@ -106,6 +163,7 @@ namespace MR {
           SIFT::track_t track_index = 0;
           while (reader (tck) && track_index < num_tracks()) {
 
+            // --- Microstructure sampling ---
             double sum = 0.0;
             size_t sample_count = 0;
 
@@ -113,7 +171,6 @@ namespace MR {
               double dist_along_segment = 0.0;
               size_t point_idx = 0;
 
-              // Walk along the streamline, sampling at regular intervals
               while (point_idx < tck.size() - 1) {
                 const Eigen::Vector3f& p0 = tck[point_idx];
                 const Eigen::Vector3f& p1 = tck[point_idx + 1];
@@ -130,8 +187,8 @@ namespace MR {
                   const double frac = dist_along_segment / segment_length;
                   const Eigen::Vector3f sample_point = p0 + frac * segment;
 
-                  if (interp.scanner (sample_point)) {
-                    const float val = interp.value();
+                  if (micro_interp.scanner (sample_point)) {
+                    const float val = micro_interp.value();
                     if (std::isfinite (val) && val > 0.0f) {
                       sum += val;
                       ++sample_count;
@@ -160,6 +217,45 @@ namespace MR {
               ++no_sample_count;
             }
 
+            // --- Parcellation-based blend classification ---
+            if (do_parcellation) {
+              if (tck.size() < 2) {
+                micro_blend[track_index] = 0.0;
+                ++count_unknown;
+              } else {
+                int label_start = 0, label_end = 0;
+                if (parcel_interp_ptr->scanner (tck.front()))
+                  label_start = parcel_interp_ptr->value();
+                if (parcel_interp_ptr->scanner (tck.back()))
+                  label_end = parcel_interp_ptr->value();
+
+                auto it_start = label_is_subcortical.find (label_start);
+                auto it_end   = label_is_subcortical.find (label_end);
+
+                const bool start_known = (it_start != label_is_subcortical.end());
+                const bool end_known   = (it_end   != label_is_subcortical.end());
+
+                if (start_known && end_known) {
+                  const bool start_sub = it_start->second;
+                  const bool end_sub   = it_end->second;
+
+                  if (start_sub && end_sub) {
+                    micro_blend[track_index] = 1.0;
+                    ++count_sub_sub;
+                  } else if (start_sub || end_sub) {
+                    micro_blend[track_index] = 0.5;
+                    ++count_sub_cor;
+                  } else {
+                    micro_blend[track_index] = 0.0;
+                    ++count_cor_cor;
+                  }
+                } else {
+                  micro_blend[track_index] = 0.0;
+                  ++count_unknown;
+                }
+              }
+            }
+
             ++track_index;
             ++progress;
           }
@@ -169,9 +265,18 @@ namespace MR {
         }
 
         if (clamped_count)
-          WARN (str(clamped_count) + " streamlines had MicroAF_effective below " + str(SIFT2_MICRO_AF_EPSILON) + " and were clamped");
+          WARN (str(clamped_count) + " streamlines had MicroAF below " + str(SIFT2_MICRO_AF_EPSILON) + " and were clamped");
         if (no_sample_count)
           WARN (str(no_sample_count) + " streamlines had no valid samples from the microstructure map; set to neutral (1.0)");
+
+        if (do_parcellation) {
+          INFO ("Parcellation endpoint classification:");
+          INFO ("  Subcortical-Subcortical (100% MicroAF): " + str(count_sub_sub));
+          INFO ("  Subcortical-Cortical    ( 50% MicroAF): " + str(count_sub_cor));
+          INFO ("  Cortical-Cortical       (  0% MicroAF): " + str(count_cor_cor));
+          if (count_unknown)
+            WARN ("  Unknown/unclassified    (  0% MicroAF): " + str(count_unknown));
+        }
 
         double A = 0.0;
         for (size_t i = 1; i != fixels.size(); ++i)
@@ -182,135 +287,6 @@ namespace MR {
         has_microstructure = true;
 
         INFO ("Microstructure map loaded from \"" + map_path + "\" with lambda = " + str(lambda_micro) + " (scaled = " + str(reg_multiplier_micro) + ")");
-
-        // Default: uniform blend (100% MicroAF for all streamlines)
-        micro_blend.resize (num_tracks());
-        micro_blend.setOnes();
-      }
-
-
-
-      void TckFactor::load_parcellation (const std::string& parcel_path, const std::string& classes_path, const std::string& tracks_path)
-      {
-        assert (has_microstructure);
-        assert (micro_blend.size() == ssize_t (num_tracks()));
-
-        // Parse CSV: intensity,class
-        std::map<int, bool> label_is_subcortical;
-        {
-          std::ifstream csv_file (classes_path);
-          if (!csv_file.is_open())
-            throw Exception ("Unable to open parcellation classes CSV: \"" + classes_path + "\"");
-
-          std::string line;
-          bool header_skipped = false;
-          while (std::getline (csv_file, line)) {
-            // Strip whitespace
-            if (line.empty())
-              continue;
-
-            // Skip header row if present
-            if (!header_skipped) {
-              if (line.find_first_of ("0123456789") != 0) {
-                header_skipped = true;
-                continue;
-              }
-              header_skipped = true;
-            }
-
-            std::istringstream ss (line);
-            std::string intensity_str, class_str;
-            if (!std::getline (ss, intensity_str, ',') || !std::getline (ss, class_str, ','))
-              throw Exception ("Malformed line in parcellation classes CSV: \"" + line + "\"");
-
-            // Trim whitespace from class_str
-            const size_t start = class_str.find_first_not_of (" \t\r\n");
-            const size_t end = class_str.find_last_not_of (" \t\r\n");
-            if (start == std::string::npos)
-              throw Exception ("Empty class in parcellation classes CSV: \"" + line + "\"");
-            class_str = class_str.substr (start, end - start + 1);
-
-            const int intensity = std::stoi (intensity_str);
-
-            if (class_str == "Subcortical" || class_str == "subcortical")
-              label_is_subcortical[intensity] = true;
-            else if (class_str == "Cortical" || class_str == "cortical")
-              label_is_subcortical[intensity] = false;
-            else
-              throw Exception ("Unknown class \"" + class_str + "\" in parcellation CSV (expected Subcortical or Cortical)");
-          }
-        }
-
-        INFO (str(label_is_subcortical.size()) + " region labels loaded from parcellation classes CSV");
-
-        auto parcel_image = Image<int32_t>::open (parcel_path);
-        Interp::Nearest<decltype(parcel_image)> interp (parcel_image);
-
-        size_t count_sub_sub = 0, count_sub_cor = 0, count_cor_cor = 0, count_unknown = 0;
-
-        {
-          Tractography::Properties properties;
-          Tractography::Reader<float> reader (tracks_path, properties);
-          Tractography::Streamline<float> tck;
-          ProgressBar progress ("Classifying streamline endpoints using parcellation", num_tracks());
-
-          SIFT::track_t track_index = 0;
-          while (reader (tck) && track_index < num_tracks()) {
-
-            if (tck.size() < 2) {
-              micro_blend[track_index] = 1.0;
-              ++count_unknown;
-              ++track_index;
-              ++progress;
-              continue;
-            }
-
-            // Sample parcellation at first and last streamline points
-            int label_start = 0, label_end = 0;
-            if (interp.scanner (tck.front()))
-              label_start = interp.value();
-            if (interp.scanner (tck.back()))
-              label_end = interp.value();
-
-            auto it_start = label_is_subcortical.find (label_start);
-            auto it_end   = label_is_subcortical.find (label_end);
-
-            const bool start_known = (it_start != label_is_subcortical.end());
-            const bool end_known   = (it_end   != label_is_subcortical.end());
-
-            if (start_known && end_known) {
-              const bool start_sub = it_start->second;
-              const bool end_sub   = it_end->second;
-
-              if (start_sub && end_sub) {
-                micro_blend[track_index] = 1.0;
-                ++count_sub_sub;
-              } else if (start_sub || end_sub) {
-                micro_blend[track_index] = 0.5;
-                ++count_sub_cor;
-              } else {
-                micro_blend[track_index] = 0.0;
-                ++count_cor_cor;
-              }
-            } else {
-              micro_blend[track_index] = 1.0;
-              ++count_unknown;
-            }
-
-            ++track_index;
-            ++progress;
-          }
-
-          if (track_index != num_tracks())
-            throw Exception ("Track file contains " + str(track_index) + " streamlines but expected " + str(num_tracks()));
-        }
-
-        INFO ("Parcellation endpoint classification:");
-        INFO ("  Subcortical-Subcortical (100% MicroAF): " + str(count_sub_sub));
-        INFO ("  Subcortical-Cortical    ( 50% MicroAF): " + str(count_sub_cor));
-        INFO ("  Cortical-Cortical       (  0% MicroAF): " + str(count_cor_cor));
-        if (count_unknown)
-          WARN ("  Unknown/unclassified    (100% MicroAF): " + str(count_unknown));
       }
 
 
