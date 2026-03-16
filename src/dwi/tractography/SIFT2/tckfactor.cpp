@@ -448,7 +448,7 @@ namespace MR {
           double cf_reg_micro = 0.0;
           if (has_microstructure) {
             for (SIFT::track_t i = 0; i != num_tracks(); ++i)
-              cf_reg_micro += reg_multiplier_micro * std::exp (coefficients[i]) / microstructure_af[i];
+              cf_reg_micro += reg_multiplier_micro * Math::pow2 (coefficients[i] - std::log (microstructure_af[i]));
           }
 
           cf_reg = cf_reg_tik + cf_reg_tv + cf_reg_micro;
