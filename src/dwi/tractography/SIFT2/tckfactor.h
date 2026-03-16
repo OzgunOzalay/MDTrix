@@ -81,6 +81,7 @@ namespace MR {
 
           void set_reg_lambdas     (const double, const double);
           void load_microstructure_map (const std::string& map_path, const std::string& tracks_path, const double lambda_micro);
+          void load_parcellation (const std::string& parcel_path, const std::string& classes_path, const std::string& tracks_path);
           void set_min_iters       (const int    i) { min_iters = i; }
           void set_max_iters       (const int    i) { max_iters = i; }
           void set_min_factor      (const double i) { min_coeff = i ? std::log(i) : -std::numeric_limits<double>::infinity(); }
@@ -120,6 +121,7 @@ namespace MR {
           double reg_multiplier_tikhonov, reg_multiplier_tv, reg_multiplier_micro;
           bool has_microstructure;
           Eigen::Array<default_type, Eigen::Dynamic, 1> microstructure_af;
+          Eigen::Array<default_type, Eigen::Dynamic, 1> micro_blend;
           size_t min_iters, max_iters;
           double min_coeff, max_coeff, max_coeff_step, min_cf_decrease_percentage;
           std::string csv_path;
