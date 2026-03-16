@@ -38,7 +38,7 @@ namespace MR {
         reg_tv  (tckfactor.reg_multiplier_tv / tckfactor.contributions[track_index]->get_total_contribution()),
         reg_micro (tckfactor.has_microstructure ? tckfactor.reg_multiplier_micro : 0.0),
         micro_log_af  (tckfactor.has_microstructure ? std::log (tckfactor.microstructure_af[track_index]) : 0.0),
-        micro_blend (tckfactor.has_microstructure && tckfactor.micro_blend.size() ? tckfactor.micro_blend[track_index] : 1.0)
+        micro_blend (tckfactor.has_microstructure ? tckfactor.micro_blend[track_index] : 1.0)
       {
         const SIFT::TrackContribution& track_contribution = *tckfactor.contributions[track_index];
         for (size_t i = 0; i != track_contribution.dim(); ++i) {

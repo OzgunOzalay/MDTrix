@@ -38,7 +38,7 @@
 #define SIFT2_REGULARISATION_TIKHONOV_DEFAULT 0.0
 #define SIFT2_REGULARISATION_TV_DEFAULT 0.1
 #define SIFT2_REGULARISATION_MICRO_DEFAULT 0.05
-#define SIFT2_MICRO_AF_EPSILON 1e-6
+#define SIFT2_MICRO_AF_EPSILON 0.1
 
 #define SIFT2_MIN_TD_FRAC_DEFAULT 0.10
 
@@ -80,8 +80,8 @@ namespace MR {
 
 
           void set_reg_lambdas     (const double, const double);
-          void load_microstructure_map (const std::string& map_path, const std::string& tracks_path, const double lambda_micro);
-          void load_parcellation (const std::string& parcel_path, const std::string& classes_path, const std::string& tracks_path);
+          void load_microstructure_map (const std::string& map_path, const std::string& tracks_path, const double lambda_micro,
+                                       const std::string& parcel_path = "", const std::string& classes_path = "");
           void set_min_iters       (const int    i) { min_iters = i; }
           void set_max_iters       (const int    i) { max_iters = i; }
           void set_min_factor      (const double i) { min_coeff = i ? std::log(i) : -std::numeric_limits<double>::infinity(); }
