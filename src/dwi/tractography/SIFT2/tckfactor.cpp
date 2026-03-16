@@ -147,7 +147,8 @@ namespace MR {
               const double mean = sum / sample_count;
               const double variance = (sample_count > 1) ?
                   (sum_sq / sample_count - mean * mean) : 0.0;
-              const double effective = mean / (1.0 + std::max (0.0, variance));
+              const double std_dev = (variance > 0.0) ? std::sqrt (variance) : 0.0;
+              const double effective = mean / (1.0 + std_dev);
 
               if (effective < SIFT2_MICRO_AF_EPSILON) {
                 microstructure_af[track_index] = SIFT2_MICRO_AF_EPSILON;
@@ -448,7 +449,7 @@ namespace MR {
           double cf_reg_micro = 0.0;
           if (has_microstructure) {
             for (SIFT::track_t i = 0; i != num_tracks(); ++i)
-              cf_reg_micro += reg_multiplier_micro * std::exp (coefficients[i]) / microstructure_af[i];
+              cf_reg_micro += reg_multiplier_micro * Math::pow2 (coefficients[i] - std::log (microstructure_af[i]));
           }
 
           cf_reg = cf_reg_tik + cf_reg_tv + cf_reg_micro;

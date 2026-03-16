@@ -79,7 +79,7 @@ namespace MR {
           const double Fs;
           const double reg_tik, reg_tv;
           const double reg_micro;
-          const double micro_af;
+          const double micro_log_af;
 
           vector<Fixel> fixels;
 

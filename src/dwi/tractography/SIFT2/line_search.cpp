@@ -37,7 +37,7 @@ namespace MR {
         //   and the whole thing is appropriately normalised
         reg_tv  (tckfactor.reg_multiplier_tv / tckfactor.contributions[track_index]->get_total_contribution()),
         reg_micro (tckfactor.has_microstructure ? tckfactor.reg_multiplier_micro : 0.0),
-        micro_af  (tckfactor.has_microstructure ? tckfactor.microstructure_af[track_index] : 1.0)
+        micro_log_af  (tckfactor.has_microstructure ? std::log (tckfactor.microstructure_af[track_index]) : 0.0)
       {
         const SIFT::TrackContribution& track_contribution = *tckfactor.contributions[track_index];
         for (size_t i = 0; i != track_contribution.dim(); ++i) {
@@ -86,12 +86,11 @@ namespace MR {
         data_result += tv_result;
 
         if (reg_micro) {
-          const double micro_term = reg_micro * factor / micro_af;
+          const double micro_diff = coefficient - micro_log_af;
           Result micro_result;
-          micro_result.cost        = micro_term;
-          micro_result.first_deriv = micro_term;
-          micro_result.second_deriv = micro_term;
-          micro_result.third_deriv  = micro_term;
+          micro_result.cost        = reg_micro * Math::pow2 (micro_diff);
+          micro_result.first_deriv = reg_micro * 2.0 * micro_diff;
+          micro_result.second_deriv = reg_micro * 2.0;
           data_result += micro_result;
         }
 
@@ -109,7 +108,7 @@ namespace MR {
           cf_reg_tv += i->SL_eff * SIFT2::tvreg (Fs+dFs, i->meanFs);
         }
         const double cf_reg_tik = Math::pow2 (Fs+dFs);
-        const double cf_reg_micro = reg_micro ? (reg_micro * std::exp (Fs+dFs) / micro_af) : 0.0;
+        const double cf_reg_micro = reg_micro ? (reg_micro * Math::pow2 (Fs+dFs - micro_log_af)) : 0.0;
         return (cf_data + (reg_tik * cf_reg_tik) + (reg_tv * cf_reg_tv) + cf_reg_micro);
       }
 
