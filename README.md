@@ -8,45 +8,56 @@ Standard SIFT2 optimises per-streamline weights to match a whole-brain tractogra
 
 ### Modified objective function
 
-The standard SIFT2 cost function has two terms — a data fidelity term and a regularisation term:
+The standard SIFT2 cost function has two terms — a data fidelity term and regularisation terms (Tikhonov and Total Variation):
 
 ```
-Minimise:  Σ_f (FOD_f − Σ_i w_i · l_if)²  +  λ₁ · Σ_i (w_i · log(w_i))
+Minimise:  Σ_f PM_f · (FOD_f − μ · TD_f)²  +  λ_tik · A · Σ_i coeff_i²  +  λ_tv · A · Σ_i TV(coeff_i)
 ```
 
-MDTrix adds a third, microstructure-informed prior term:
+MDTrix adds a microstructure-informed prior term:
 
 ```
-Minimise:  Σ_f (FOD_f − Σ_i w_i · l_if)²  +  λ₁ · Σ_i (w_i · log(w_i))  +  λ₂ · Σ_i (w_i / MicroAF_effective_i)
++  λ_micro · A · Σ_i blend_i · (coeff_i − log(MicroAF_i))²
 ```
 
-where `MicroAF_effective_i` is a data-driven per-streamline quantity computed internally from a user-supplied volumetric microstructure map.
+where:
+- `coeff_i` is the log-domain weighting coefficient for streamline *i* (the output weight is `exp(coeff_i)`)
+- `MicroAF_i` is the mean microstructure value sampled along streamline *i*
+- `blend_i` is a per-streamline factor in {0.0, 0.5, 1.0} determined by endpoint anatomy (see parcellation below)
+- `A = Σ_f(PM_f · FOD_f²) / N_tracks` is the same scaling constant used by Tikhonov and TV regularisation
 
-### How `MicroAF_effective` is computed
+This penalty pulls each streamline's coefficient toward `log(MicroAF_i)` — the log of the mean microstructure value sampled along that streamline. The strength of this pull is controlled by `λ_micro`, `A`, and the blend factor.
 
-Given a 3D volumetric microstructure map (normalised axonal density, mean WM value = 1.0), MDTrix:
+### How `MicroAF` is computed
 
-1. **Samples** the map along each streamline at half-voxel intervals (derived from the image header at runtime)
-2. **Computes** the mean and variance of the sampled values per streamline
-3. **Derives** the effective microstructure value:
+Given a 3D volumetric microstructure map (normalised axonal density, mean WM value ≈ 1.0), MDTrix:
 
-```
-MicroAF_effective_i = mean_i / (1 + variance_i)
-```
+1. **Samples** the map along each streamline at half-voxel intervals using trilinear interpolation
+2. **Computes** the arithmetic mean of the sampled values per streamline
+3. **Clamps** values below 0.1 to 0.1 (with a warning reporting how many streamlines were affected)
+4. **Sets** streamlines with no valid samples to 1.0 (neutral — no influence on the coefficient)
 
-This formula has no free parameters. The variance itself acts as the weighting mechanism:
+### Parcellation-based blending
 
-| Tissue type | Variance | Effect |
+When a parcellation atlas and class CSV are provided, MDTrix classifies each streamline's endpoints and modulates the microstructure prior strength accordingly:
+
+| Endpoint pair | `blend_i` | Effect |
 |---|---|---|
-| Coherent WM (e.g. compact subcortical bundles) | Low | Denominator ≈ 1, full prior strength |
-| Heterogeneous WM (e.g. long tracts through crossings) | High | Denominator >> 1, prior automatically suppressed |
+| Both subcortical | 1.0 | Full microstructure prior |
+| One subcortical, one cortical | 0.5 | Half-strength prior |
+| Both cortical | 0.0 | Pure SIFT2 (no microstructure influence) |
+| Unknown/unclassified endpoints | 0.0 | Pure SIFT2 (no microstructure influence) |
+
+This reflects the assumption that microstructure maps are most informative for compact subcortical bundles and least informative for cortical terminations.
 
 ### New CLI flags
 
 | Flag | Description |
 |---|---|
 | `-microstructure_map <image>` | Path to a 3D volumetric microstructure map (`.mif`, `.mif.gz`, `.nii.gz`). Optional — if omitted, behaviour is identical to standard SIFT2 with zero overhead. |
-| `-microstructure_lambda <float>` | Strength of the microstructure prior. Default: `0.05`. |
+| `-microstructure_lambda <float>` | Strength of the microstructure prior. Default: `0.05`. Scaled internally by the constant A. |
+| `-parcellation <image>` | Atlas/parcellation image (integer-labelled) for endpoint-based classification. Must be used with `-parcellation_classes`. |
+| `-parcellation_classes <path>` | CSV file mapping parcellation region intensity values to class (`Subcortical` or `Cortical`). Format: `intensity,class`. Must be used with `-parcellation`. |
 
 ### Usage example
 
@@ -58,25 +69,20 @@ tcksift2 tracks.tck wmfod.mif weights.txt
 tcksift2 tracks.tck wmfod.mif weights.txt \
     -microstructure_map MicroAF.mif.gz \
     -microstructure_lambda 0.05
+
+# With microstructure prior and parcellation-based blending
+tcksift2 tracks.tck wmfod.mif weights.txt \
+    -microstructure_map MicroAF.mif.gz \
+    -microstructure_lambda 0.05 \
+    -parcellation atlas.mif \
+    -parcellation_classes labels.csv
 ```
 
 ### Safeguards
 
-- If `MicroAF_effective` falls below `1e-6` for any streamline, it is clamped to `1e-6` and a warning reports how many streamlines were affected.
+- If `MicroAF` falls below `0.1` for any streamline, it is clamped to `0.1` and a warning reports how many streamlines were affected. This prevents extreme penalties from `log(MicroAF)` dominating the cost function.
 - Streamlines with no valid samples (e.g. all points outside the image FOV) receive a neutral value of `1.0` (no effect on their weight).
-
-### Validation
-
-A Python validation script is included at `scripts/validate_microstructure_weighting.py`:
-
-```bash
-python3 scripts/validate_microstructure_weighting.py \
-    tracks.tck wmfod.mif MicroAF.mif.gz [/path/to/tcksift2]
-```
-
-It runs standard and modified SIFT2 on the same data and verifies that:
-- Streamlines with high microstructure variance receive systematically lower weights
-- Weight changes correlate positively with `MicroAF_effective` and negatively with variance
+- Streamlines whose endpoints land in regions not listed in the parcellation CSV receive `blend = 0.0` (no microstructure influence), to avoid applying the prior in uncharacterised anatomy.
 
 ## Building
 
@@ -97,7 +103,7 @@ The microstructure-informed SIFT2 implementation lives in:
 |---|---|
 | `cmd/tcksift2.cpp` | Command entry point and CLI flag definitions |
 | `src/dwi/tractography/SIFT2/tckfactor.h` | `TckFactor` class declaration |
-| `src/dwi/tractography/SIFT2/tckfactor.cpp` | Microstructure map loading, streamline sampling, `MicroAF_effective` computation |
+| `src/dwi/tractography/SIFT2/tckfactor.cpp` | Microstructure map loading, streamline sampling, parcellation classification |
 | `src/dwi/tractography/SIFT2/line_search.h` | Line search functor with microstructure cost term |
 | `src/dwi/tractography/SIFT2/line_search.cpp` | Cost function evaluation including microstructure gradient |
 

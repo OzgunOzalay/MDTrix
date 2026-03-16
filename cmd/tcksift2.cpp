@@ -221,15 +221,16 @@ void run ()
     opt = get_options ("microstructure_map");
     if (opt.size()) {
       const float micro_lambda = get_option_value ("microstructure_lambda", SIFT2_REGULARISATION_MICRO_DEFAULT);
-      tckfactor.load_microstructure_map (std::string(opt[0][0]), std::string(argument[0]), micro_lambda);
 
       auto opt_parcel = get_options ("parcellation");
       auto opt_classes = get_options ("parcellation_classes");
-      if (opt_parcel.size() && opt_classes.size()) {
-        tckfactor.load_parcellation (std::string(opt_parcel[0][0]), std::string(opt_classes[0][0]), std::string(argument[0]));
-      } else if (opt_parcel.size() || opt_classes.size()) {
+      if (opt_parcel.size() != opt_classes.size())
         throw Exception ("Options -parcellation and -parcellation_classes must be used together");
-      }
+
+      const std::string parcel_path  = opt_parcel.size()  ? std::string(opt_parcel[0][0])  : "";
+      const std::string classes_path = opt_classes.size() ? std::string(opt_classes[0][0]) : "";
+
+      tckfactor.load_microstructure_map (std::string(opt[0][0]), std::string(argument[0]), micro_lambda, parcel_path, classes_path);
     } else {
       if (get_options ("parcellation").size() || get_options ("parcellation_classes").size())
         throw Exception ("Options -parcellation and -parcellation_classes require -microstructure_map");
