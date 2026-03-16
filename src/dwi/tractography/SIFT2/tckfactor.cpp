@@ -258,7 +258,7 @@ namespace MR {
           while (reader (tck) && track_index < num_tracks()) {
 
             if (tck.size() < 2) {
-              micro_blend[track_index] = 1.0;
+              micro_blend[track_index] = 0.0;
               ++count_unknown;
               ++track_index;
               ++progress;
@@ -278,9 +278,10 @@ namespace MR {
             const bool start_known = (it_start != label_is_subcortical.end());
             const bool end_known   = (it_end   != label_is_subcortical.end());
 
-            if (start_known && end_known) {
-              const bool start_sub = it_start->second;
-              const bool end_sub   = it_end->second;
+            if (start_known || end_known) {
+              // Treat unknown endpoints as cortical (conservative: less MicroAF)
+              const bool start_sub = start_known && it_start->second;
+              const bool end_sub   = end_known   && it_end->second;
 
               if (start_sub && end_sub) {
                 micro_blend[track_index] = 1.0;
@@ -293,7 +294,8 @@ namespace MR {
                 ++count_cor_cor;
               }
             } else {
-              micro_blend[track_index] = 1.0;
+              // Neither endpoint has a known label — default to no MicroAF
+              micro_blend[track_index] = 0.0;
               ++count_unknown;
             }
 
@@ -310,7 +312,7 @@ namespace MR {
         INFO ("  Subcortical-Cortical    ( 50% MicroAF): " + str(count_sub_cor));
         INFO ("  Cortical-Cortical       (  0% MicroAF): " + str(count_cor_cor));
         if (count_unknown)
-          WARN ("  Unknown/unclassified    (100% MicroAF): " + str(count_unknown));
+          WARN ("  Unknown/unclassified    (  0% MicroAF): " + str(count_unknown));
       }
 
 
