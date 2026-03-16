@@ -14,11 +14,14 @@
  * For more details, see http://www.mrtrix.org/.
  */
 
+#include <algorithm>
 #include <fstream>
 #include <map>
 #include <set>
 #include <memory>
 #include <sstream>
+#include <utility>
+#include <vector>
 
 #include "header.h"
 #include "image.h"
@@ -26,6 +29,7 @@
 #include "math/math.h"
 #include "misc/bitset.h"
 
+#include "algo/loop.h"
 #include "interp/linear.h"
 #include "interp/nearest.h"
 
@@ -141,10 +145,42 @@ namespace MR {
               throw Exception ("Unknown class \"" + class_str + "\" in parcellation CSV (expected Subcortical or Cortical)");
           }
 
-          INFO (str(label_is_subcortical.size()) + " region labels loaded from parcellation classes CSV");
+          INFO (str(label_is_subcortical.size()) + " region labels loaded from parcellation classes CSV:");
+          for (const auto& kv : label_is_subcortical)
+            INFO ("  Label " + str(kv.first) + ": " + std::string(kv.second ? "Subcortical" : "Cortical"));
 
           parcel_image_ptr.reset (new Image<int32_t> (Image<int32_t>::open (parcel_path)));
           parcel_interp_ptr.reset (new Interp::Nearest<Image<int32_t>> (*parcel_image_ptr));
+
+          // Scan parcellation image for label voxel counts
+          {
+            std::map<int, size_t> label_voxel_count;
+            auto parcel_scan = *parcel_image_ptr;
+            for (auto l = Loop (parcel_scan) (parcel_scan); l; ++l) {
+              const int label = parcel_scan.value();
+              if (label != 0)
+                ++label_voxel_count[label];
+            }
+            INFO (str(label_voxel_count.size()) + " unique non-zero labels found in parcellation image:");
+            for (const auto& kv : label_voxel_count) {
+              const auto it = label_is_subcortical.find (kv.first);
+              const std::string cls = (it != label_is_subcortical.end())
+                  ? (it->second ? "Subcortical" : "Cortical")
+                  : "NOT IN CSV";
+              INFO ("  Label " + str(kv.first) + ": " + str(kv.second) + " voxels (" + cls + ")");
+            }
+            size_t csv_missing = 0;
+            for (const auto& kv : label_is_subcortical) {
+              if (label_voxel_count.find (kv.first) == label_voxel_count.end()) {
+                if (csv_missing == 0)
+                  WARN ("The following CSV labels are not present in the parcellation image (typo or wrong file?):");
+                WARN ("  Label " + str(kv.first) + " (" + std::string(kv.second ? "Subcortical" : "Cortical") + ")");
+                ++csv_missing;
+              }
+            }
+            if (!csv_missing)
+              INFO ("All CSV labels are present in the parcellation image.");
+          }
         }
 
         microstructure_af.resize (num_tracks());
@@ -154,6 +190,8 @@ namespace MR {
         size_t clamped_count = 0;
         size_t no_sample_count = 0;
         size_t count_sub_sub = 0, count_sub_cor = 0, count_cor_cor = 0, count_unknown = 0;
+        std::map<int, size_t> endpoint_label_counts;
+        size_t endpoints_outside_fov = 0;
 
         {
           Tractography::Properties properties;
@@ -225,10 +263,18 @@ namespace MR {
                 ++count_unknown;
               } else {
                 int label_start = 0, label_end = 0;
-                if (parcel_interp_ptr->scanner (tck.front()))
+                if (parcel_interp_ptr->scanner (tck.front())) {
                   label_start = parcel_interp_ptr->value();
-                if (parcel_interp_ptr->scanner (tck.back()))
+                  ++endpoint_label_counts[label_start];
+                } else {
+                  ++endpoints_outside_fov;
+                }
+                if (parcel_interp_ptr->scanner (tck.back())) {
                   label_end = parcel_interp_ptr->value();
+                  ++endpoint_label_counts[label_end];
+                } else {
+                  ++endpoints_outside_fov;
+                }
 
                 auto it_start = label_is_subcortical.find (label_start);
                 auto it_end   = label_is_subcortical.find (label_end);
@@ -272,11 +318,33 @@ namespace MR {
 
         if (do_parcellation) {
           INFO ("Parcellation endpoint classification:");
-          INFO ("  Subcortical-Subcortical (100% MicroAF): " + str(count_sub_sub));
-          INFO ("  Subcortical-Cortical    ( 50% MicroAF): " + str(count_sub_cor));
-          INFO ("  Cortical-Cortical       (  0% MicroAF): " + str(count_cor_cor));
+          INFO ("  Subcortical-Subcortical (blend=1.0): " + str(count_sub_sub) + " streamlines");
+          INFO ("  Subcortical-Cortical    (blend=0.5): " + str(count_sub_cor) + " streamlines");
+          INFO ("  Cortical-Cortical       (blend=0.0): " + str(count_cor_cor) + " streamlines");
           if (count_unknown)
-            WARN ("  Unknown/unclassified    (  0% MicroAF): " + str(count_unknown));
+            WARN ("  Unknown/unclassified    (blend=0.0): " + str(count_unknown) + " streamlines");
+          if (endpoints_outside_fov)
+            WARN ("  " + str(endpoints_outside_fov) + " endpoints landed outside the parcellation image FOV");
+
+          // Report endpoint label distribution (top 30 most frequent)
+          INFO ("Endpoint label hit distribution (" + str(endpoint_label_counts.size()) + " unique labels hit across all endpoints):");
+          std::vector<std::pair<size_t, int>> sorted_endpoints;
+          sorted_endpoints.reserve (endpoint_label_counts.size());
+          for (const auto& kv : endpoint_label_counts)
+            sorted_endpoints.push_back ({kv.second, kv.first});
+          std::sort (sorted_endpoints.rbegin(), sorted_endpoints.rend());
+          const size_t max_print = std::min (sorted_endpoints.size(), size_t(30));
+          for (size_t i = 0; i < max_print; ++i) {
+            const int lbl    = sorted_endpoints[i].second;
+            const size_t cnt = sorted_endpoints[i].first;
+            const auto it    = label_is_subcortical.find (lbl);
+            const std::string cls = (it != label_is_subcortical.end())
+                ? (it->second ? "Subcortical" : "Cortical")
+                : "NOT IN CSV";
+            INFO ("  Label " + str(lbl) + ": " + str(cnt) + " endpoints (" + cls + ")");
+          }
+          if (sorted_endpoints.size() > max_print)
+            INFO ("  ... (" + str(sorted_endpoints.size() - max_print) + " further labels omitted)");
         }
 
         double A = 0.0;
