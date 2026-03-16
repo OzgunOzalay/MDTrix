@@ -61,7 +61,18 @@ const OptionGroup SIFT2RegularisationOption = OptionGroup ("Regularisation optio
 
   + Option ("microstructure_lambda", "strength of the microstructure prior term "
                                      "(default: " + str(SIFT2_REGULARISATION_MICRO_DEFAULT, 2) + ")")
-    + Argument ("value").type_float (0.0);
+    + Argument ("value").type_float (0.0)
+
+  + Option ("parcellation", "atlas/parcellation image (integer-labelled) for endpoint-based classification of streamlines. "
+                            "Must be used together with -parcellation_classes. Streamlines with both endpoints in subcortical "
+                            "regions receive 100% microstructure weighting; one subcortical + one cortical endpoint gives 50%; "
+                            "both cortical endpoints receive 0% (pure SIFT2).")
+    + Argument ("image").type_image_in()
+
+  + Option ("parcellation_classes", "CSV file mapping parcellation region intensity values to class. "
+                                    "Format: intensity,class where class is Subcortical or Cortical. "
+                                    "Must be used together with -parcellation.")
+    + Argument ("path").type_file_in();
 
 
 
@@ -211,6 +222,17 @@ void run ()
     if (opt.size()) {
       const float micro_lambda = get_option_value ("microstructure_lambda", SIFT2_REGULARISATION_MICRO_DEFAULT);
       tckfactor.load_microstructure_map (std::string(opt[0][0]), std::string(argument[0]), micro_lambda);
+
+      auto opt_parcel = get_options ("parcellation");
+      auto opt_classes = get_options ("parcellation_classes");
+      if (opt_parcel.size() && opt_classes.size()) {
+        tckfactor.load_parcellation (std::string(opt_parcel[0][0]), std::string(opt_classes[0][0]), std::string(argument[0]));
+      } else if (opt_parcel.size() || opt_classes.size()) {
+        throw Exception ("Options -parcellation and -parcellation_classes must be used together");
+      }
+    } else {
+      if (get_options ("parcellation").size() || get_options ("parcellation_classes").size())
+        throw Exception ("Options -parcellation and -parcellation_classes require -microstructure_map");
     }
 
     opt = get_options ("min_iters");
