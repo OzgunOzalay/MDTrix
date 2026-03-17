@@ -76,7 +76,7 @@ namespace MR {
 
 
 
-      void TckFactor::load_microstructure_map (const std::string& map_path, const std::string& tracks_path, const double lambda_micro,
+      void TckFactor::load_microstructure_map (const std::string& map_path, const std::string& tracks_path,
                                                const std::string& parcel_path, const std::string& classes_path)
       {
         assert (num_tracks());
@@ -347,15 +347,9 @@ namespace MR {
             INFO ("  ... (" + str(sorted_endpoints.size() - max_print) + " further labels omitted)");
         }
 
-        double A = 0.0;
-        for (size_t i = 1; i != fixels.size(); ++i)
-          A += fixels[i].get_weight() * Math::pow2 (fixels[i].get_FOD());
-        A /= double(num_tracks());
-
-        reg_multiplier_micro = lambda_micro * A;
         has_microstructure = true;
 
-        INFO ("Microstructure map loaded from \"" + map_path + "\" with lambda = " + str(lambda_micro) + " (scaled = " + str(reg_multiplier_micro) + ")");
+        INFO ("Microstructure map loaded from \"" + map_path + "\"");
       }
 
 

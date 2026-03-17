@@ -53,15 +53,9 @@ const OptionGroup SIFT2RegularisationOption = OptionGroup ("Regularisation optio
     + Argument ("value").type_float (0.0)
 
   + Option ("microstructure_map", "path to a 3D volumetric microstructure map (e.g. .mif.gz) encoding normalised axonal density. "
-                                  "When provided, a microstructure-informed prior term is added to the objective function. "
-                                  "Per-streamline effective microstructure values are computed internally by sampling the map "
-                                  "along each streamline and combining mean and variance. If not provided, behaviour is identical "
-                                  "to the standard SIFT2 algorithm with zero overhead.")
+                                  "Per-streamline mean values are sampled along each streamline and used by -micro_strength. "
+                                  "If not provided, behaviour is identical to the standard SIFT2 algorithm with zero overhead.")
     + Argument ("image").type_image_in()
-
-  + Option ("microstructure_lambda", "strength of the microstructure prior term "
-                                     "(default: " + str(SIFT2_REGULARISATION_MICRO_DEFAULT, 2) + ")")
-    + Argument ("value").type_float (0.0)
 
   + Option ("parcellation", "atlas/parcellation image (integer-labelled) for endpoint-based classification of streamlines. "
                             "Must be used together with -parcellation_classes. Streamlines with both endpoints in subcortical "
@@ -233,8 +227,6 @@ void run ()
 
     opt = get_options ("microstructure_map");
     if (opt.size()) {
-      const float micro_lambda = get_option_value ("microstructure_lambda", SIFT2_REGULARISATION_MICRO_DEFAULT);
-
       auto opt_parcel = get_options ("parcellation");
       auto opt_classes = get_options ("parcellation_classes");
       if (opt_parcel.size() != opt_classes.size())
@@ -243,7 +235,7 @@ void run ()
       const std::string parcel_path  = opt_parcel.size()  ? std::string(opt_parcel[0][0])  : "";
       const std::string classes_path = opt_classes.size() ? std::string(opt_classes[0][0]) : "";
 
-      tckfactor.load_microstructure_map (std::string(opt[0][0]), std::string(argument[0]), micro_lambda, parcel_path, classes_path);
+      tckfactor.load_microstructure_map (std::string(opt[0][0]), std::string(argument[0]), parcel_path, classes_path);
     } else {
       if (get_options ("parcellation").size() || get_options ("parcellation_classes").size())
         throw Exception ("Options -parcellation and -parcellation_classes require -microstructure_map");
@@ -279,14 +271,8 @@ void run ()
     tckfactor.estimate_factors();
 
     opt = get_options ("micro_strength");
-    if (opt.size()) {
-      const float strength = opt[0][0];
-      if (get_option_value ("microstructure_lambda", SIFT2_REGULARISATION_MICRO_DEFAULT) > 0.0)
-        WARN ("-micro_strength and -microstructure_lambda > 0 are both active: the in-optimisation "
-              "prior has already nudged coefficients toward MicroAF before the post-optimisation blend "
-              "is applied. Set -microstructure_lambda 0 for a clean, interpretable blend.");
-      tckfactor.apply_micro_strength (strength);
-    }
+    if (opt.size())
+      tckfactor.apply_micro_strength (float(opt[0][0]));
 
   }
 
