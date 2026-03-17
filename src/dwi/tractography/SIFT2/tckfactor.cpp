@@ -644,15 +644,7 @@ namespace MR {
           cf_reg_tik *= reg_multiplier_tikhonov;
           cf_reg_tv  *= reg_multiplier_tv;
 
-          double cf_reg_micro = 0.0;
-          if (has_microstructure) {
-            for (SIFT::track_t i = 0; i != num_tracks(); ++i) {
-              if (micro_blend[i] > 0.0)
-                cf_reg_micro += reg_multiplier_micro * micro_blend[i] * Math::pow2 (coefficients[i] - std::log (microstructure_af[i]));
-            }
-          }
-
-          cf_reg = cf_reg_tik + cf_reg_tv + cf_reg_micro;
+          cf_reg = cf_reg_tik + cf_reg_tv;
 
           new_cf = cf_data + cf_reg;
 
