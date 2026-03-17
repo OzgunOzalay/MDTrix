@@ -72,7 +72,20 @@ const OptionGroup SIFT2RegularisationOption = OptionGroup ("Regularisation optio
   + Option ("parcellation_classes", "CSV file mapping parcellation region intensity values to class. "
                                     "Format: intensity,class where class is Subcortical or Cortical. "
                                     "Must be used together with -parcellation.")
-    + Argument ("path").type_file_in();
+    + Argument ("path").type_file_in()
+
+  + Option ("micro_strength", "post-optimisation blend strength between SIFT2 and microstructure-informed weights "
+                              "(range 0.0-1.0; default: disabled). "
+                              "After the SIFT2 optimiser converges, each streamline coefficient is linearly "
+                              "interpolated in log-weight space: "
+                              "coeff_final = (1 - s*blend) * coeff_sift2 + (s*blend) * log(MicroAF), "
+                              "where 's' is this value and 'blend' is the per-streamline parcellation factor "
+                              "(1.0 for Sub-Sub, 0.5 for Sub-Cor, 0.0 for Cor-Cor). "
+                              "In linear weight space this is equivalent to: weight = sift2^(1-s*blend) * MicroAF^(s*blend). "
+                              "For example, s=0.8 gives 80%% MicroAF for Sub-Sub connections and 40%% for Sub-Cor. "
+                              "Requires -microstructure_map. For cleanest results set -microstructure_lambda 0 "
+                              "to disable the in-optimisation prior when using this flag.")
+    + Argument ("value").type_float (0.0, 1.0);
 
 
 
@@ -234,6 +247,8 @@ void run ()
     } else {
       if (get_options ("parcellation").size() || get_options ("parcellation_classes").size())
         throw Exception ("Options -parcellation and -parcellation_classes require -microstructure_map");
+      if (get_options ("micro_strength").size())
+        throw Exception ("-micro_strength requires -microstructure_map");
     }
 
     opt = get_options ("min_iters");
@@ -262,6 +277,16 @@ void run ()
       tckfactor.set_min_cf_decrease (float(opt[0][0]));
 
     tckfactor.estimate_factors();
+
+    opt = get_options ("micro_strength");
+    if (opt.size()) {
+      const float strength = opt[0][0];
+      if (get_option_value ("microstructure_lambda", SIFT2_REGULARISATION_MICRO_DEFAULT) > 0.0)
+        WARN ("-micro_strength and -microstructure_lambda > 0 are both active: the in-optimisation "
+              "prior has already nudged coefficients toward MicroAF before the post-optimisation blend "
+              "is applied. Set -microstructure_lambda 0 for a clean, interpretable blend.");
+      tckfactor.apply_micro_strength (strength);
+    }
 
   }
 

@@ -93,6 +93,7 @@ namespace MR {
 
           void set_csv_path (const std::string& i) { csv_path = i; }
 
+          void apply_micro_strength (const double alpha);
 
           void store_orig_TDs();
 

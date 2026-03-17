@@ -360,6 +360,37 @@ namespace MR {
 
 
 
+      void TckFactor::apply_micro_strength (const double alpha)
+      {
+        if (!has_microstructure)
+          throw Exception ("apply_micro_strength() called but no microstructure map was loaded");
+        if (alpha <= 0.0)
+          return;
+
+        size_t n_sub_sub = 0, n_sub_cor = 0, n_unaffected = 0;
+        for (SIFT::track_t i = 0; i != num_tracks(); ++i) {
+          const double b = micro_blend[i];
+          if (b <= 0.0) {
+            ++n_unaffected;
+            continue;
+          }
+          const double effective_alpha = alpha * b;
+          coefficients[i] = (1.0 - effective_alpha) * coefficients[i]
+                           + effective_alpha * std::log (microstructure_af[i]);
+          if (b > 0.5 + 1e-6)
+            ++n_sub_sub;
+          else
+            ++n_sub_cor;
+        }
+
+        INFO ("Applied -micro_strength " + str(alpha) + ":");
+        INFO ("  Sub-Sub (blend=" + str(alpha)       + "): " + str(n_sub_sub)    + " streamlines");
+        INFO ("  Sub-Cor (blend=" + str(alpha * 0.5) + "): " + str(n_sub_cor)    + " streamlines");
+        INFO ("  Other   (blend=0.0): "               + str(n_unaffected) + " streamlines unchanged");
+      }
+
+
+
       void TckFactor::store_orig_TDs()
       {
         for (vector<Fixel>::iterator i = fixels.begin(); i != fixels.end(); ++i)
