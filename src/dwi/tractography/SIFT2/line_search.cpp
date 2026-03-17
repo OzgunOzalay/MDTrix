@@ -35,10 +35,7 @@ namespace MR {
         reg_tik (tckfactor.reg_multiplier_tikhonov),
         // Pre-scale reg_tv by total streamline contribution; each fixel then contributes (PM * length),
         //   and the whole thing is appropriately normalised
-        reg_tv  (tckfactor.reg_multiplier_tv / tckfactor.contributions[track_index]->get_total_contribution()),
-        reg_micro (tckfactor.has_microstructure ? tckfactor.reg_multiplier_micro : 0.0),
-        micro_log_af  (tckfactor.has_microstructure ? std::log (tckfactor.microstructure_af[track_index]) : 0.0),
-        micro_blend (tckfactor.has_microstructure ? tckfactor.micro_blend[track_index] : 1.0)
+        reg_tv  (tckfactor.reg_multiplier_tv / tckfactor.contributions[track_index]->get_total_contribution())
       {
         const SIFT::TrackContribution& track_contribution = *tckfactor.contributions[track_index];
         for (size_t i = 0; i != track_contribution.dim(); ++i) {
@@ -86,16 +83,6 @@ namespace MR {
         data_result += tik_result;
         data_result += tv_result;
 
-        if (reg_micro && micro_blend > 0.0) {
-          const double scaled_reg = reg_micro * micro_blend;
-          const double micro_diff = coefficient - micro_log_af;
-          Result micro_result;
-          micro_result.cost        = scaled_reg * Math::pow2 (micro_diff);
-          micro_result.first_deriv = scaled_reg * 2.0 * micro_diff;
-          micro_result.second_deriv = scaled_reg * 2.0;
-          data_result += micro_result;
-        }
-
         return data_result;
       }
 
@@ -110,8 +97,7 @@ namespace MR {
           cf_reg_tv += i->SL_eff * SIFT2::tvreg (Fs+dFs, i->meanFs);
         }
         const double cf_reg_tik = Math::pow2 (Fs+dFs);
-        const double cf_reg_micro = (reg_micro && micro_blend > 0.0) ? (reg_micro * micro_blend * Math::pow2 (Fs+dFs - micro_log_af)) : 0.0;
-        return (cf_data + (reg_tik * cf_reg_tik) + (reg_tv * cf_reg_tv) + cf_reg_micro);
+        return (cf_data + (reg_tik * cf_reg_tik) + (reg_tv * cf_reg_tv));
       }
 
 

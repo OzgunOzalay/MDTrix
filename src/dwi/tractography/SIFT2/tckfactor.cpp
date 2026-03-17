@@ -76,7 +76,7 @@ namespace MR {
 
 
 
-      void TckFactor::load_microstructure_map (const std::string& map_path, const std::string& tracks_path, const double lambda_micro,
+      void TckFactor::load_microstructure_map (const std::string& map_path, const std::string& tracks_path,
                                                const std::string& parcel_path, const std::string& classes_path)
       {
         assert (num_tracks());
@@ -347,15 +347,40 @@ namespace MR {
             INFO ("  ... (" + str(sorted_endpoints.size() - max_print) + " further labels omitted)");
         }
 
-        double A = 0.0;
-        for (size_t i = 1; i != fixels.size(); ++i)
-          A += fixels[i].get_weight() * Math::pow2 (fixels[i].get_FOD());
-        A /= double(num_tracks());
-
-        reg_multiplier_micro = lambda_micro * A;
         has_microstructure = true;
 
-        INFO ("Microstructure map loaded from \"" + map_path + "\" with lambda = " + str(lambda_micro) + " (scaled = " + str(reg_multiplier_micro) + ")");
+        INFO ("Microstructure map loaded from \"" + map_path + "\"");
+      }
+
+
+
+      void TckFactor::apply_micro_strength (const double alpha)
+      {
+        if (!has_microstructure)
+          throw Exception ("apply_micro_strength() called but no microstructure map was loaded");
+        if (alpha <= 0.0)
+          return;
+
+        size_t n_sub_sub = 0, n_sub_cor = 0, n_unaffected = 0;
+        for (SIFT::track_t i = 0; i != num_tracks(); ++i) {
+          const double b = micro_blend[i];
+          if (b <= 0.0) {
+            ++n_unaffected;
+            continue;
+          }
+          const double effective_alpha = alpha * b;
+          coefficients[i] = (1.0 - effective_alpha) * coefficients[i]
+                           + effective_alpha * std::log (microstructure_af[i]);
+          if (b > 0.5 + 1e-6)
+            ++n_sub_sub;
+          else
+            ++n_sub_cor;
+        }
+
+        INFO ("Applied -micro_strength " + str(alpha) + ":");
+        INFO ("  Sub-Sub (blend=" + str(alpha)       + "): " + str(n_sub_sub)    + " streamlines");
+        INFO ("  Sub-Cor (blend=" + str(alpha * 0.5) + "): " + str(n_sub_cor)    + " streamlines");
+        INFO ("  Other   (blend=0.0): "               + str(n_unaffected) + " streamlines unchanged");
       }
 
 
