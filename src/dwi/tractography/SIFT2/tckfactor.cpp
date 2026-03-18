@@ -186,8 +186,6 @@ namespace MR {
         microstructure_af.resize (num_tracks());
         micro_blend.resize (num_tracks());
         micro_blend.setOnes();
-        micro_pool.resize (num_tracks());
-        micro_pool.setZero();
 
         size_t clamped_count = 0;
         size_t no_sample_count = 0;
@@ -290,11 +288,9 @@ namespace MR {
 
                   if (start_sub && end_sub) {
                     micro_blend[track_index] = 1.0;
-                    micro_pool[track_index]  = true;
                     ++count_sub_sub;
                   } else if (start_sub || end_sub) {
                     micro_blend[track_index] = 0.0;
-                    micro_pool[track_index]  = true;   // in pool for normalisation, not for blending
                     ++count_sub_cor;
                   } else {
                     micro_blend[track_index] = 0.0;
@@ -365,33 +361,32 @@ namespace MR {
         if (alpha <= 0.0)
           return;
 
-        // Compute scale factor to bring MicroAF values onto the same magnitude as SIFT2 weights.
-        // MicroAF is an absolute tissue-fraction metric (e.g. MicroWF ~ 0.3-0.7) while SIFT2
-        // weights for densely tracked tractograms can be two orders of magnitude smaller.
-        // Without normalisation the blend injects raw MicroAF magnitudes, massively upscaling
-        // any streamline that receives a non-zero blend factor.
+        // Compute the normalisation scale factor per connection type (blend bucket).
+        // For each unique non-zero blend value, compute:
+        //   scale = mean(SIFT2_weight for that bucket) / mean(MicroAF for that bucket)
+        // This ensures the scale is derived exclusively from the streamlines being modified,
+        // making it invariant to changes in other connection types (e.g. Sub-Cor policy).
         //
-        // Compute the normalisation scale over Sub-Sub + Sub-Cor streamlines (micro_pool == true).
-        // Sub-Cor connections contribute to the scale estimate but receive no MicroAF blending.
-        // Using micro_pool (rather than micro_blend > 0) keeps the pool stable: it always contains
-        // every streamline with at least one subcortical endpoint, regardless of whether Sub-Cor
-        // connections are currently assigned MicroAF weights or pure SIFT2.
-        double sum_sift2 = 0.0, sum_micro = 0.0;
-        size_t n_affected = 0;
+        // Currently only blend == 1.0 (Sub-Sub) is non-zero, so there is one bucket.
+        // Using a per-bucket approach rather than a global pool means Sub-Sub scaling
+        // is computed from Sub-Sub SIFT2 weights only — the physically correct anchor.
+        double sum_sift2_subsub = 0.0, sum_micro_subsub = 0.0;
+        size_t n_subsub = 0;
         for (SIFT::track_t i = 0; i != num_tracks(); ++i) {
-          if (!micro_pool[i]) continue;
-          sum_sift2 += std::exp (coefficients[i]);
-          sum_micro += microstructure_af[i];
-          ++n_affected;
+          if (micro_blend[i] < 1.0 - 1e-6) continue;
+          sum_sift2_subsub += std::exp (coefficients[i]);
+          sum_micro_subsub += microstructure_af[i];
+          ++n_subsub;
         }
 
         double micro_scale = 1.0;
-        if (n_affected > 0 && sum_micro > 0.0) {
-          micro_scale = (sum_sift2 / n_affected) / (sum_micro / n_affected);
-          INFO ("MicroAF normalisation: mean SIFT2 weight = " + str(sum_sift2 / n_affected)
-              + ", mean MicroAF = " + str(sum_micro / n_affected)
-              + ", scale factor = " + str(micro_scale));
+        if (n_subsub > 0 && sum_micro_subsub > 0.0) {
+          micro_scale = (sum_sift2_subsub / n_subsub) / (sum_micro_subsub / n_subsub);
         }
+        WARN ("MicroAF normalisation (Sub-Sub, n=" + str(n_subsub) + "): "
+            + "mean SIFT2 weight = " + str(sum_sift2_subsub / std::max(n_subsub, size_t(1)))
+            + ", mean MicroAF = "    + str(sum_micro_subsub / std::max(n_subsub, size_t(1)))
+            + ", scale factor = "    + str(micro_scale));
 
         size_t n_sub_sub = 0, n_unaffected = 0;
         for (SIFT::track_t i = 0; i != num_tracks(); ++i) {
@@ -406,9 +401,9 @@ namespace MR {
           ++n_sub_sub;
         }
 
-        INFO ("Applied -micro_strength " + str(alpha) + ":");
-        INFO ("  Sub-Sub (blend=" + str(alpha) + "): " + str(n_sub_sub)    + " streamlines");
-        INFO ("  All others (blend=0.0): "             + str(n_unaffected) + " streamlines unchanged (pure SIFT2)");
+        WARN ("Applied -micro_strength " + str(alpha) + ":");
+        WARN ("  Sub-Sub (blend=" + str(alpha) + "): " + str(n_sub_sub)    + " streamlines modified");
+        WARN ("  All others (blend=0.0): "             + str(n_unaffected) + " streamlines unchanged (pure SIFT2)");
       }
 
 
