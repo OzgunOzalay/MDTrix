@@ -59,8 +59,8 @@ const OptionGroup SIFT2RegularisationOption = OptionGroup ("Regularisation optio
 
   + Option ("parcellation", "atlas/parcellation image (integer-labelled) for endpoint-based classification of streamlines. "
                             "Must be used together with -parcellation_classes. Streamlines with both endpoints in subcortical "
-                            "regions receive 100% microstructure weighting; one subcortical + one cortical endpoint gives 50%; "
-                            "both cortical endpoints receive 0% (pure SIFT2).")
+                            "regions receive 100% microstructure weighting (blend=1.0); all other connections (Sub-Cor or Cor-Cor) "
+                            "receive 0% microstructure weighting (pure SIFT2).")
     + Argument ("image").type_image_in()
 
   + Option ("parcellation_classes", "CSV file mapping parcellation region intensity values to class. "
@@ -74,11 +74,9 @@ const OptionGroup SIFT2RegularisationOption = OptionGroup ("Regularisation optio
                               "interpolated in log-weight space: "
                               "coeff_final = (1 - s*blend) * coeff_sift2 + (s*blend) * log(MicroAF), "
                               "where 's' is this value and 'blend' is the per-streamline parcellation factor "
-                              "(1.0 for Sub-Sub, 0.5 for Sub-Cor, 0.0 for Cor-Cor). "
-                              "In linear weight space this is equivalent to: weight = sift2^(1-s*blend) * MicroAF^(s*blend). "
-                              "For example, s=0.8 gives 80%% MicroAF for Sub-Sub connections and 40%% for Sub-Cor. "
-                              "Requires -microstructure_map. For cleanest results set -microstructure_lambda 0 "
-                              "to disable the in-optimisation prior when using this flag.")
+                              "(1.0 for Sub-Sub, 0.0 for all others). "
+                              "In linear weight space this is equivalent to: weight = sift2^(1-s) * MicroAF^s for Sub-Sub. "
+                              "Requires -microstructure_map.")
     + Argument ("value").type_float (0.0, 1.0);
 
 

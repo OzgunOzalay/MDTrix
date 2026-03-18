@@ -290,7 +290,7 @@ namespace MR {
                     micro_blend[track_index] = 1.0;
                     ++count_sub_sub;
                   } else if (start_sub || end_sub) {
-                    micro_blend[track_index] = 0.5;
+                    micro_blend[track_index] = 0.0;
                     ++count_sub_cor;
                   } else {
                     micro_blend[track_index] = 0.0;
@@ -319,7 +319,7 @@ namespace MR {
         if (do_parcellation) {
           INFO ("Parcellation endpoint classification:");
           INFO ("  Subcortical-Subcortical (blend=1.0): " + str(count_sub_sub) + " streamlines");
-          INFO ("  Subcortical-Cortical    (blend=0.5): " + str(count_sub_cor) + " streamlines");
+          INFO ("  Subcortical-Cortical    (blend=0.0): " + str(count_sub_cor) + " streamlines (pure SIFT2)");
           INFO ("  Cortical-Cortical       (blend=0.0): " + str(count_cor_cor) + " streamlines");
           if (count_unknown)
             WARN ("  Unknown/unclassified    (blend=0.0): " + str(count_unknown) + " streamlines");
@@ -387,7 +387,7 @@ namespace MR {
               + ", scale factor = " + str(micro_scale));
         }
 
-        size_t n_sub_sub = 0, n_sub_cor = 0, n_unaffected = 0;
+        size_t n_sub_sub = 0, n_unaffected = 0;
         for (SIFT::track_t i = 0; i != num_tracks(); ++i) {
           const double b = micro_blend[i];
           if (b <= 0.0) {
@@ -397,16 +397,12 @@ namespace MR {
           const double effective_alpha = alpha * b;
           coefficients[i] = (1.0 - effective_alpha) * coefficients[i]
                            + effective_alpha * std::log (microstructure_af[i] * micro_scale);
-          if (b > 0.5 + 1e-6)
-            ++n_sub_sub;
-          else
-            ++n_sub_cor;
+          ++n_sub_sub;
         }
 
         INFO ("Applied -micro_strength " + str(alpha) + ":");
-        INFO ("  Sub-Sub (blend=" + str(alpha)       + "): " + str(n_sub_sub)    + " streamlines");
-        INFO ("  Sub-Cor (blend=" + str(alpha * 0.5) + "): " + str(n_sub_cor)    + " streamlines");
-        INFO ("  Other   (blend=0.0): "               + str(n_unaffected) + " streamlines unchanged");
+        INFO ("  Sub-Sub (blend=" + str(alpha) + "): " + str(n_sub_sub)    + " streamlines");
+        INFO ("  All others (blend=0.0): "             + str(n_unaffected) + " streamlines unchanged (pure SIFT2)");
       }
 
 
