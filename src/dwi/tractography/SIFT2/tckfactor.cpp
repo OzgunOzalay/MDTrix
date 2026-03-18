@@ -186,6 +186,8 @@ namespace MR {
         microstructure_af.resize (num_tracks());
         micro_blend.resize (num_tracks());
         micro_blend.setOnes();
+        micro_pool.resize (num_tracks());
+        micro_pool.setZero();
 
         size_t clamped_count = 0;
         size_t no_sample_count = 0;
@@ -288,9 +290,11 @@ namespace MR {
 
                   if (start_sub && end_sub) {
                     micro_blend[track_index] = 1.0;
+                    micro_pool[track_index]  = true;
                     ++count_sub_sub;
                   } else if (start_sub || end_sub) {
                     micro_blend[track_index] = 0.0;
+                    micro_pool[track_index]  = true;   // in pool for normalisation, not for blending
                     ++count_sub_cor;
                   } else {
                     micro_blend[track_index] = 0.0;
@@ -367,14 +371,15 @@ namespace MR {
         // Without normalisation the blend injects raw MicroAF magnitudes, massively upscaling
         // any streamline that receives a non-zero blend factor.
         //
-        // Fix: compute mean_sift2_weight / mean_micro_af over Sub-Sub streamlines only (blend == 1.0).
-        // Using all blend>0 streamlines would make the scale factor sensitive to which connection
-        // types are included in MicroAF assignment, causing Sub-Sub weights to shift as a side effect
-        // whenever Sub-Cor/Cor-Cor membership changes — even if Sub-Sub labels are unchanged.
+        // Compute the normalisation scale over Sub-Sub + Sub-Cor streamlines (micro_pool == true).
+        // Sub-Cor connections contribute to the scale estimate but receive no MicroAF blending.
+        // Using micro_pool (rather than micro_blend > 0) keeps the pool stable: it always contains
+        // every streamline with at least one subcortical endpoint, regardless of whether Sub-Cor
+        // connections are currently assigned MicroAF weights or pure SIFT2.
         double sum_sift2 = 0.0, sum_micro = 0.0;
         size_t n_affected = 0;
         for (SIFT::track_t i = 0; i != num_tracks(); ++i) {
-          if (micro_blend[i] < 1.0 - 1e-6) continue;
+          if (!micro_pool[i]) continue;
           sum_sift2 += std::exp (coefficients[i]);
           sum_micro += microstructure_af[i];
           ++n_affected;
