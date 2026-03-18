@@ -361,6 +361,32 @@ namespace MR {
         if (alpha <= 0.0)
           return;
 
+        // Compute scale factor to bring MicroAF values onto the same magnitude as SIFT2 weights.
+        // MicroAF is an absolute tissue-fraction metric (e.g. MicroWF ~ 0.3-0.7) while SIFT2
+        // weights for densely tracked tractograms can be two orders of magnitude smaller.
+        // Without normalisation the blend injects raw MicroAF magnitudes, massively upscaling
+        // any streamline that receives a non-zero blend factor.
+        //
+        // Fix: compute mean_sift2_weight / mean_micro_af over all affected streamlines (blend > 0)
+        // and multiply microstructure_af by this ratio before blending. This preserves the
+        // rank ordering (microstructural contrast) while anchoring the mean to the SIFT2 scale.
+        double sum_sift2 = 0.0, sum_micro = 0.0;
+        size_t n_affected = 0;
+        for (SIFT::track_t i = 0; i != num_tracks(); ++i) {
+          if (micro_blend[i] <= 0.0) continue;
+          sum_sift2 += std::exp (coefficients[i]);
+          sum_micro += microstructure_af[i];
+          ++n_affected;
+        }
+
+        double micro_scale = 1.0;
+        if (n_affected > 0 && sum_micro > 0.0) {
+          micro_scale = (sum_sift2 / n_affected) / (sum_micro / n_affected);
+          INFO ("MicroAF normalisation: mean SIFT2 weight = " + str(sum_sift2 / n_affected)
+              + ", mean MicroAF = " + str(sum_micro / n_affected)
+              + ", scale factor = " + str(micro_scale));
+        }
+
         size_t n_sub_sub = 0, n_sub_cor = 0, n_unaffected = 0;
         for (SIFT::track_t i = 0; i != num_tracks(); ++i) {
           const double b = micro_blend[i];
@@ -370,7 +396,7 @@ namespace MR {
           }
           const double effective_alpha = alpha * b;
           coefficients[i] = (1.0 - effective_alpha) * coefficients[i]
-                           + effective_alpha * std::log (microstructure_af[i]);
+                           + effective_alpha * std::log (microstructure_af[i] * micro_scale);
           if (b > 0.5 + 1e-6)
             ++n_sub_sub;
           else
