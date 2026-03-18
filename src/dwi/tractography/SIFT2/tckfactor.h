@@ -121,6 +121,7 @@ namespace MR {
           bool has_microstructure;
           Eigen::Array<default_type, Eigen::Dynamic, 1> microstructure_af;
           Eigen::Array<default_type, Eigen::Dynamic, 1> micro_blend;
+          Eigen::Array<bool,         Eigen::Dynamic, 1> micro_pool;
           size_t min_iters, max_iters;
           double min_coeff, max_coeff, max_coeff_step, min_cf_decrease_percentage;
           std::string csv_path;
