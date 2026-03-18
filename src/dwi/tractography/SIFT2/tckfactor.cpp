@@ -367,13 +367,14 @@ namespace MR {
         // Without normalisation the blend injects raw MicroAF magnitudes, massively upscaling
         // any streamline that receives a non-zero blend factor.
         //
-        // Fix: compute mean_sift2_weight / mean_micro_af over all affected streamlines (blend > 0)
-        // and multiply microstructure_af by this ratio before blending. This preserves the
-        // rank ordering (microstructural contrast) while anchoring the mean to the SIFT2 scale.
+        // Fix: compute mean_sift2_weight / mean_micro_af over Sub-Sub streamlines only (blend == 1.0).
+        // Using all blend>0 streamlines would make the scale factor sensitive to which connection
+        // types are included in MicroAF assignment, causing Sub-Sub weights to shift as a side effect
+        // whenever Sub-Cor/Cor-Cor membership changes — even if Sub-Sub labels are unchanged.
         double sum_sift2 = 0.0, sum_micro = 0.0;
         size_t n_affected = 0;
         for (SIFT::track_t i = 0; i != num_tracks(); ++i) {
-          if (micro_blend[i] <= 0.0) continue;
+          if (micro_blend[i] < 1.0 - 1e-6) continue;
           sum_sift2 += std::exp (coefficients[i]);
           sum_micro += microstructure_af[i];
           ++n_affected;
