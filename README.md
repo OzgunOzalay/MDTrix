@@ -4,60 +4,72 @@
 
 ## What this fork changes
 
-Standard SIFT2 optimises per-streamline weights to match a whole-brain tractogram to fixel-wise fibre densities. MDTrix extends this by adding an optional microstructure-informed prior term to the SIFT2 objective function, allowing anatomical plausibility information from a microstructure map to influence the final streamline weights.
+Standard SIFT2 optimises per-streamline weights to match a whole-brain tractogram to fixel-wise fibre densities. MDTrix extends this with a post-optimisation step that replaces the SIFT2 weights of subcortical–subcortical connections with values derived from a microstructure map.
 
-### Modified objective function
+The SIFT2 optimiser itself is unchanged — no extra term is added to the objective function. Microstructure influence is applied after convergence via `-micro_strength`.
 
-The standard SIFT2 cost function has two terms — a data fidelity term and regularisation terms (Tikhonov and Total Variation):
+### Post-optimisation blend (`-micro_strength`)
 
-```
-Minimise:  Σ_f PM_f · (FOD_f − μ · TD_f)²  +  λ_tik · A · Σ_i coeff_i²  +  λ_tv · A · Σ_i TV(coeff_i)
-```
-
-MDTrix adds a microstructure-informed prior term:
+After SIFT2 converges, each Sub-Sub streamline coefficient is blended in log-weight space:
 
 ```
-+  λ_micro · A · Σ_i blend_i · (coeff_i − log(MicroAF_i))²
+coeff_final = (1 - s) * coeff_sift2 + s * log(MicroAF_normalised)
+```
+
+In linear weight space this is equivalent to a geometric blend:
+
+```
+weight_final = sift2_weight^(1-s) * MicroAF_normalised^s
 ```
 
 where:
-- `coeff_i` is the log-domain weighting coefficient for streamline *i* (the output weight is `exp(coeff_i)`)
-- `MicroAF_i` is the mean microstructure value sampled along streamline *i*
-- `blend_i` is a per-streamline factor in {0.0, 0.5, 1.0} determined by endpoint anatomy (see parcellation below)
-- `A = Σ_f(PM_f · FOD_f²) / N_tracks` is the same scaling constant used by Tikhonov and TV regularisation
+- `s` is the blend strength (0.0–1.0), set with `-micro_strength`
+- `MicroAF_normalised` is the per-streamline mean microstructure value, rescaled so its mean matches the mean SIFT2 weight of Sub-Sub streamlines (preserving contrast while keeping magnitudes consistent)
 
-This penalty pulls each streamline's coefficient toward `log(MicroAF_i)` — the log of the mean microstructure value sampled along that streamline. The strength of this pull is controlled by `λ_micro`, `A`, and the blend factor.
+Setting `s = 1.0` fully replaces the SIFT2 weight with the (normalised) microstructure value. Setting `s = 0.0` leaves weights unchanged (pure SIFT2). Intermediate values blend the two.
 
 ### How `MicroAF` is computed
 
-Given a 3D volumetric microstructure map (normalised axonal density, mean WM value ≈ 1.0), MDTrix:
+Given a 3D volumetric microstructure map (centred at 1.0, range approximately 0.5–1.5):
 
 1. **Samples** the map along each streamline at half-voxel intervals using trilinear interpolation
 2. **Computes** the arithmetic mean of the sampled values per streamline
-3. **Clamps** values below 0.1 to 0.1 (with a warning reporting how many streamlines were affected)
-4. **Sets** streamlines with no valid samples to 1.0 (neutral — no influence on the coefficient)
+3. **Clamps** values below 0.1 to 0.1 (warning printed if any are affected)
+4. **Sets** streamlines with no valid samples to 1.0 (neutral — no influence on weight)
 
-### Parcellation-based blending
+### MicroAF normalisation
 
-When a parcellation atlas and class CSV are provided, MDTrix classifies each streamline's endpoints and modulates the microstructure prior strength accordingly:
+The microstructure map uses absolute tissue-fraction values (e.g. MicroWF centred at ~1.0) while SIFT2 weights for densely tracked tractograms are typically two orders of magnitude smaller. To avoid upscaling affected streamlines, MDTrix computes a scale factor from Sub-Sub streamlines only:
 
-| Endpoint pair | `blend_i` | Effect |
+```
+scale = mean(SIFT2 weight, Sub-Sub) / mean(MicroAF, Sub-Sub)
+```
+
+`MicroAF_normalised = MicroAF * scale` preserves the microstructural rank ordering (contrast between streamlines) while anchoring the mean injected weight to the SIFT2 weight scale. The scale factor is printed to stderr on every run so it can be recorded and compared across experiments.
+
+Using only Sub-Sub streamlines for this calculation ensures the scale factor is invariant to changes in how Sub-Cor or Cor-Cor connections are treated — Sub-Sub weights will be identical across two runs that differ only in the Sub-Cor policy.
+
+### Parcellation-based connection classification
+
+When a parcellation atlas and class CSV are provided, each streamline is classified by its endpoint anatomy:
+
+| Endpoint pair | `blend` | Weight source |
 |---|---|---|
-| Both subcortical | 1.0 | Full microstructure prior |
-| One subcortical, one cortical | 0.5 | Half-strength prior |
-| Both cortical | 0.0 | Pure SIFT2 (no microstructure influence) |
-| Unknown/unclassified endpoints | 0.0 | Pure SIFT2 (no microstructure influence) |
+| Both subcortical (Sub-Sub) | 1.0 | `s * 100%` MicroAF, rest SIFT2 |
+| One subcortical, one cortical (Sub-Cor) | 0.0 | Pure SIFT2 |
+| Both cortical (Cor-Cor) | 0.0 | Pure SIFT2 |
+| Unknown/unclassified | 0.0 | Pure SIFT2 |
 
-This reflects the assumption that microstructure maps are most informative for compact subcortical bundles and least informative for cortical terminations.
+Only Sub-Sub connections receive microstructure weighting. All other connections are left exactly as SIFT2 assigned them.
 
 ### New CLI flags
 
 | Flag | Description |
 |---|---|
-| `-microstructure_map <image>` | Path to a 3D volumetric microstructure map (`.mif`, `.mif.gz`, `.nii.gz`). Optional — if omitted, behaviour is identical to standard SIFT2 with zero overhead. |
-| `-microstructure_lambda <float>` | Strength of the microstructure prior. Default: `0.05`. Scaled internally by the constant A. |
+| `-microstructure_map <image>` | 3D volumetric microstructure map (`.mif`, `.mif.gz`, `.nii.gz`). Centred at 1.0. Optional — if omitted, behaviour is identical to standard SIFT2 with zero overhead. |
 | `-parcellation <image>` | Atlas/parcellation image (integer-labelled) for endpoint-based classification. Must be used with `-parcellation_classes`. |
 | `-parcellation_classes <path>` | CSV file mapping parcellation region intensity values to class (`Subcortical` or `Cortical`). Format: `intensity,class`. Must be used with `-parcellation`. |
+| `-micro_strength <float>` | Post-optimisation blend strength in range 0.0–1.0. At 1.0, Sub-Sub weights are fully replaced by normalised MicroAF values. Requires `-microstructure_map`. |
 
 ### Usage example
 
@@ -65,24 +77,37 @@ This reflects the assumption that microstructure maps are most informative for c
 # Standard SIFT2 (unchanged behaviour)
 tcksift2 tracks.tck wmfod.mif weights.txt
 
-# With microstructure-informed prior
+# With microstructure-informed weights for Sub-Sub connections (full replacement)
 tcksift2 tracks.tck wmfod.mif weights.txt \
-    -microstructure_map MicroAF.mif.gz \
-    -microstructure_lambda 0.05
-
-# With microstructure prior and parcellation-based blending
-tcksift2 tracks.tck wmfod.mif weights.txt \
-    -microstructure_map MicroAF.mif.gz \
-    -microstructure_lambda 0.05 \
+    -microstructure_map MicroWF.mif.gz \
     -parcellation atlas.mif \
-    -parcellation_classes labels.csv
+    -parcellation_classes labels.csv \
+    -micro_strength 1.0
+
+# With partial blend (80% microstructure, 20% SIFT2 for Sub-Sub)
+tcksift2 tracks.tck wmfod.mif weights.txt \
+    -microstructure_map MicroWF.mif.gz \
+    -parcellation atlas.mif \
+    -parcellation_classes labels.csv \
+    -micro_strength 0.8
 ```
 
-### Safeguards
+The parcellation CSV should have the format:
 
-- If `MicroAF` falls below `0.1` for any streamline, it is clamped to `0.1` and a warning reports how many streamlines were affected. This prevents extreme penalties from `log(MicroAF)` dominating the cost function.
-- Streamlines with no valid samples (e.g. all points outside the image FOV) receive a neutral value of `1.0` (no effect on their weight).
-- Streamlines whose endpoints land in regions not listed in the parcellation CSV receive `blend = 0.0` (no microstructure influence), to avoid applying the prior in uncharacterised anatomy.
+```
+intensity,class
+1,Subcortical
+2,Subcortical
+3,Cortical
+...
+```
+
+### Safeguards and diagnostics
+
+- **Scale mismatch prevention:** MicroAF is automatically rescaled to the SIFT2 weight magnitude before blending. The scale factor is printed unconditionally to stderr.
+- **Floor clamping:** MicroAF values below 0.1 are clamped to 0.1 with a warning reporting the count.
+- **Missing samples:** Streamlines with no valid microstructure samples (all points outside the image FOV) receive MicroAF = 1.0 (neutral weight after normalisation).
+- **Unknown anatomy:** Streamlines with endpoints outside the parcellation FOV or in regions not listed in the CSV receive blend = 0.0 (pure SIFT2).
 
 ## Building
 
@@ -103,9 +128,7 @@ The microstructure-informed SIFT2 implementation lives in:
 |---|---|
 | `cmd/tcksift2.cpp` | Command entry point and CLI flag definitions |
 | `src/dwi/tractography/SIFT2/tckfactor.h` | `TckFactor` class declaration |
-| `src/dwi/tractography/SIFT2/tckfactor.cpp` | Microstructure map loading, streamline sampling, parcellation classification |
-| `src/dwi/tractography/SIFT2/line_search.h` | Line search functor with microstructure cost term |
-| `src/dwi/tractography/SIFT2/line_search.cpp` | Cost function evaluation including microstructure gradient |
+| `src/dwi/tractography/SIFT2/tckfactor.cpp` | Microstructure map loading, streamline sampling, parcellation classification, post-optimisation blend (`apply_micro_strength`) |
 
 ## Acknowledgements
 
