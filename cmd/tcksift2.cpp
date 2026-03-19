@@ -58,9 +58,9 @@ const OptionGroup SIFT2RegularisationOption = OptionGroup ("Regularisation optio
     + Argument ("image").type_image_in()
 
   + Option ("parcellation", "atlas/parcellation image (integer-labelled) for endpoint-based classification of streamlines. "
-                            "Must be used together with -parcellation_classes. Streamlines with both endpoints in subcortical "
-                            "regions receive 100% microstructure weighting (blend=1.0); all other connections (Sub-Cor or Cor-Cor) "
-                            "receive 0% microstructure weighting (pure SIFT2).")
+                            "Must be used together with -parcellation_classes. Sub-Sub connections receive full microstructure "
+                            "weighting (blend=1.0), Sub-Cort connections receive half-strength weighting (blend=0.5), and "
+                            "Cor-Cor connections receive no microstructure weighting (pure SIFT2).")
     + Argument ("image").type_image_in()
 
   + Option ("parcellation_classes", "CSV file mapping parcellation region intensity values to class. "
@@ -72,10 +72,10 @@ const OptionGroup SIFT2RegularisationOption = OptionGroup ("Regularisation optio
                               "(range 0.0-1.0; default: disabled). "
                               "After the SIFT2 optimiser converges, each streamline coefficient is linearly "
                               "interpolated in log-weight space: "
-                              "coeff_final = (1 - s*blend) * coeff_sift2 + (s*blend) * log(MicroAF), "
+                              "coeff_final = (1 - s*blend) * coeff_sift2 + (s*blend) * log(MicroAF_normalised), "
                               "where 's' is this value and 'blend' is the per-streamline parcellation factor "
-                              "(1.0 for Sub-Sub, 0.0 for all others). "
-                              "In linear weight space this is equivalent to: weight = sift2^(1-s) * MicroAF^s for Sub-Sub. "
+                              "(1.0 for Sub-Sub, 0.5 for Sub-Cort, 0.0 for Cor-Cor). "
+                              "MicroAF is normalised independently per tier to prevent cross-tier coupling. "
                               "Requires -microstructure_map.")
     + Argument ("value").type_float (0.0, 1.0);
 

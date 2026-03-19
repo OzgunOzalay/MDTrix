@@ -39,15 +39,16 @@ Given a 3D volumetric microstructure map (centred at 1.0, range approximately 0.
 
 ### MicroAF normalisation
 
-The microstructure map uses absolute tissue-fraction values (e.g. MicroWF centred at ~1.0) while SIFT2 weights for densely tracked tractograms are typically two orders of magnitude smaller. To avoid upscaling affected streamlines, MDTrix computes a scale factor from Sub-Sub streamlines only:
+The microstructure map uses absolute tissue-fraction values (e.g. MicroWF centred at ~1.0) while SIFT2 weights for densely tracked tractograms are typically two orders of magnitude smaller. To avoid upscaling affected streamlines, MDTrix computes a **per-tier** scale factor:
 
 ```
-scale = mean(SIFT2 weight, Sub-Sub) / mean(MicroAF, Sub-Sub)
+scale_subsub  = mean(SIFT2 weight, Sub-Sub)  / mean(MicroAF, Sub-Sub)
+scale_subcort = mean(SIFT2 weight, Sub-Cort) / mean(MicroAF, Sub-Cort)
 ```
 
-`MicroAF_normalised = MicroAF * scale` preserves the microstructural rank ordering (contrast between streamlines) while anchoring the mean injected weight to the SIFT2 weight scale. The scale factor is printed to stderr on every run so it can be recorded and compared across experiments.
+Each tier's `MicroAF_normalised = MicroAF * scale` preserves the microstructural rank ordering (contrast between streamlines) while anchoring the mean injected weight to the SIFT2 weight scale of that tier. Both scale factors are printed to stderr on every run so they can be recorded and compared across experiments.
 
-Using only Sub-Sub streamlines for this calculation ensures the scale factor is invariant to changes in how Sub-Cor or Cor-Cor connections are treated — Sub-Sub weights will be identical across two runs that differ only in the Sub-Cor policy.
+Computing scale factors independently per tier ensures that changes in one connection type (e.g. removing Sub-Cort from MicroWF) cannot contaminate the scale used for another (e.g. Sub-Sub). Sub-Sub weights will be identical across two runs that differ only in the Sub-Cort policy.
 
 ### Parcellation-based connection classification
 
@@ -56,11 +57,11 @@ When a parcellation atlas and class CSV are provided, each streamline is classif
 | Endpoint pair | `blend` | Weight source |
 |---|---|---|
 | Both subcortical (Sub-Sub) | 1.0 | `s * 100%` MicroAF, rest SIFT2 |
-| One subcortical, one cortical (Sub-Cor) | 0.0 | Pure SIFT2 |
+| One subcortical, one cortical (Sub-Cort) | 0.5 | `s * 50%` MicroAF, rest SIFT2 |
 | Both cortical (Cor-Cor) | 0.0 | Pure SIFT2 |
 | Unknown/unclassified | 0.0 | Pure SIFT2 |
 
-Only Sub-Sub connections receive microstructure weighting. All other connections are left exactly as SIFT2 assigned them.
+Sub-Sub connections receive full microstructure weighting and Sub-Cort connections receive half-strength weighting. Each tier is normalised independently (see below). Cor-Cor and unclassified connections are left exactly as SIFT2 assigned them.
 
 ### New CLI flags
 
@@ -104,7 +105,7 @@ intensity,class
 
 ### Safeguards and diagnostics
 
-- **Scale mismatch prevention:** MicroAF is automatically rescaled to the SIFT2 weight magnitude before blending. The scale factor is printed unconditionally to stderr.
+- **Scale mismatch prevention:** MicroAF is automatically rescaled to the SIFT2 weight magnitude before blending, independently per tier (Sub-Sub and Sub-Cort). Both scale factors are printed unconditionally to stderr.
 - **Floor clamping:** MicroAF values below 0.1 are clamped to 0.1 with a warning reporting the count.
 - **Missing samples:** Streamlines with no valid microstructure samples (all points outside the image FOV) receive MicroAF = 1.0 (neutral weight after normalisation).
 - **Unknown anatomy:** Streamlines with endpoints outside the parcellation FOV or in regions not listed in the CSV receive blend = 0.0 (pure SIFT2).
