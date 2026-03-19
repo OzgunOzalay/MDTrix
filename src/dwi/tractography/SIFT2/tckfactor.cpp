@@ -17,7 +17,6 @@
 #include <algorithm>
 #include <fstream>
 #include <map>
-#include <set>
 #include <memory>
 #include <sstream>
 #include <utility>
@@ -50,15 +49,10 @@
 
 
 
-
-
-
 namespace MR {
   namespace DWI {
     namespace Tractography {
       namespace SIFT2 {
-
-
 
 
       void TckFactor::set_reg_lambdas (const double lambda_tikhonov, const double lambda_tv)
@@ -836,13 +830,7 @@ namespace MR {
 
 
 
-
-
-
       }
     }
   }
 }
-
-
-
