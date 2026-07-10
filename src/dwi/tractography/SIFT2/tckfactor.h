@@ -58,6 +58,11 @@ namespace MR {
 
 
 
+      enum class MicroSampleStat { Mean = 0, Min = 1, P10 = 2, GeoMean = 3 };
+
+
+
+
       class TckFactor : public SIFT::Model<Fixel>
       { MEMALIGN(TckFactor)
 
@@ -79,7 +84,8 @@ namespace MR {
 
           void set_reg_lambdas     (const double, const double);
           void load_microstructure_map (const std::string& map_path, const std::string& tracks_path,
-                                       const std::string& parcel_path = "", const std::string& classes_path = "");
+                                       const std::string& parcel_path = "", const std::string& classes_path = "",
+                                       const MicroSampleStat sample_stat = MicroSampleStat::Mean);
           void set_min_iters       (const int    i) { min_iters = i; }
           void set_max_iters       (const int    i) { max_iters = i; }
           void set_min_factor      (const double i) { min_coeff = i ? std::log(i) : -std::numeric_limits<double>::infinity(); }

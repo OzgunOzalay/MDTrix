@@ -44,6 +44,10 @@ using namespace MR::DWI::Tractography::SIFT2;
 
 
 
+const char* const micro_sample_stat_choices[] = { "mean", "min", "p10", "geomean", nullptr };
+
+
+
 const OptionGroup SIFT2RegularisationOption = OptionGroup ("Regularisation options for SIFT2")
 
   + Option ("reg_tikhonov", "provide coefficient for regularising streamline weighting coefficients (Tikhonov regularisation) (default: " + str(SIFT2_REGULARISATION_TIKHONOV_DEFAULT, 2) + ")")
@@ -53,9 +57,16 @@ const OptionGroup SIFT2RegularisationOption = OptionGroup ("Regularisation optio
     + Argument ("value").type_float (0.0)
 
   + Option ("microstructure_map", "path to a 3D volumetric microstructure map (e.g. .mif.gz) encoding normalised axonal density. "
-                                  "Per-streamline mean values are sampled along each streamline and used by -micro_strength. "
+                                  "Per-streamline values are sampled along each streamline (see -micro_sample_stat) and used "
+                                  "by -micro_strength. "
                                   "If not provided, behaviour is identical to the standard SIFT2 algorithm with zero overhead.")
     + Argument ("image").type_image_in()
+
+  + Option ("micro_sample_stat", "along-track summary statistic used to reduce the per-streamline microstructure samples "
+                                 "to a single MicroAF value (default: mean). Options are: "
+                                 + join(micro_sample_stat_choices, ", ") + ". "
+                                 "Requires -microstructure_map.")
+    + Argument ("choice").type_choice (micro_sample_stat_choices)
 
   + Option ("parcellation", "atlas/parcellation image (integer-labelled) for endpoint-based classification of streamlines. "
                             "Must be used together with -parcellation_classes. Sub-Sub connections receive full microstructure "
@@ -233,12 +244,16 @@ void run ()
       const std::string parcel_path  = opt_parcel.size()  ? std::string(opt_parcel[0][0])  : "";
       const std::string classes_path = opt_classes.size() ? std::string(opt_classes[0][0]) : "";
 
-      tckfactor.load_microstructure_map (std::string(opt[0][0]), std::string(argument[0]), parcel_path, classes_path);
+      const int sample_stat_idx = get_option_value ("micro_sample_stat", 0);
+      tckfactor.load_microstructure_map (std::string(opt[0][0]), std::string(argument[0]), parcel_path, classes_path,
+                                          static_cast<MicroSampleStat> (sample_stat_idx));
     } else {
       if (get_options ("parcellation").size() || get_options ("parcellation_classes").size())
         throw Exception ("Options -parcellation and -parcellation_classes require -microstructure_map");
       if (get_options ("micro_strength").size())
         throw Exception ("-micro_strength requires -microstructure_map");
+      if (get_options ("micro_sample_stat").size())
+        throw Exception ("-micro_sample_stat requires -microstructure_map");
     }
 
     opt = get_options ("min_iters");

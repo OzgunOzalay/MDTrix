@@ -71,7 +71,8 @@ namespace MR {
 
 
       void TckFactor::load_microstructure_map (const std::string& map_path, const std::string& tracks_path,
-                                               const std::string& parcel_path, const std::string& classes_path)
+                                               const std::string& parcel_path, const std::string& classes_path,
+                                               const MicroSampleStat sample_stat)
       {
         assert (num_tracks());
 
@@ -194,11 +195,16 @@ namespace MR {
           ProgressBar progress ("Sampling microstructure map along streamlines", num_tracks());
 
           SIFT::track_t track_index = 0;
+          vector<float> p10_samples;
           while (reader (tck) && track_index < num_tracks()) {
 
             // --- Microstructure sampling ---
             double sum = 0.0;
+            double sum_log = 0.0;
+            double running_min = std::numeric_limits<double>::infinity();
             size_t sample_count = 0;
+            if (sample_stat == MicroSampleStat::P10)
+              p10_samples.clear();
 
             if (tck.size() >= 2) {
               double dist_along_segment = 0.0;
@@ -224,6 +230,11 @@ namespace MR {
                     const float val = micro_interp.value();
                     if (std::isfinite (val) && val > 0.0f) {
                       sum += val;
+                      sum_log += std::log (val);
+                      if (val < running_min)
+                        running_min = val;
+                      if (sample_stat == MicroSampleStat::P10)
+                        p10_samples.push_back (val);
                       ++sample_count;
                     }
                   }
@@ -237,13 +248,33 @@ namespace MR {
             }
 
             if (sample_count > 0) {
-              const double mean = sum / sample_count;
+              double stat_value = 0.0;
+              switch (sample_stat) {
+                case MicroSampleStat::Mean:
+                  stat_value = sum / sample_count;
+                  break;
+                case MicroSampleStat::Min:
+                  stat_value = running_min;
+                  break;
+                case MicroSampleStat::GeoMean:
+                  stat_value = std::exp (sum_log / sample_count);
+                  break;
+                case MicroSampleStat::P10: {
+                  std::sort (p10_samples.begin(), p10_samples.end());
+                  const double pos = 0.10 * double (p10_samples.size() - 1);
+                  const size_t lo = size_t (std::floor (pos));
+                  const size_t hi = size_t (std::ceil (pos));
+                  const double frac = pos - double (lo);
+                  stat_value = double (p10_samples[lo]) * (1.0 - frac) + double (p10_samples[hi]) * frac;
+                  break;
+                }
+              }
 
-              if (mean < SIFT2_MICRO_AF_EPSILON) {
+              if (stat_value < SIFT2_MICRO_AF_EPSILON) {
                 microstructure_af[track_index] = SIFT2_MICRO_AF_EPSILON;
                 ++clamped_count;
               } else {
-                microstructure_af[track_index] = mean;
+                microstructure_af[track_index] = stat_value;
               }
             } else {
               microstructure_af[track_index] = 1.0;
