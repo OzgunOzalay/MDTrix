@@ -1,0 +1,10 @@
+# Host-compiled build artifacts — all are rebuilt inside the container
+bin/
+lib/libmrtrix.so
+lib/mrtrix3/__pycache__/
+tmp/
+config
+build.log
+configure.log
+core/version.cpp
+src/exec_version.cpp
